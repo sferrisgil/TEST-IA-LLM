@@ -1,196 +1,135 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Building2, Check, FlaskConical } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { assess, commitments as getCommitments, emptyAnswers, LEVEL_INFO, type Answers } from "@/shared/policy";
-import type { ScanFinding } from "@/shared/codeScan";
-import { IdeaStep, type Clarification } from "@/src/steps/IdeaStep";
-import { DataStep } from "@/src/steps/DataStep";
-import { UsageStep } from "@/src/steps/UsageStep";
-import { AssessmentStep, LEVEL_STYLE } from "@/src/steps/AssessmentStep";
-import { BuildStep, type Version } from "@/src/steps/BuildStep";
-import { FichaStep } from "@/src/steps/FichaStep";
+import { useEffect, useState } from "react";
+import { Building2, FlaskConical, Loader2, UserRound } from "lucide-react";
+import { Builder, type Status } from "@/src/views/Builder";
+import { Catalog, MyApps, Review } from "@/src/views/Portal";
+import { api, type Me } from "@/src/api";
 import { cn } from "@/lib/utils";
 
-const STEPS = [
-  { title: "Tu idea", subtitle: "Describe lo que necesitas" },
-  { title: "Los datos", subtitle: "Qué información usará" },
-  { title: "El uso", subtitle: "Quién y cómo la usará" },
-  { title: "Evaluación", subtitle: "Riesgos y compromisos" },
-  { title: "Construir", subtitle: "Crea y ajusta tu app" },
-  { title: "Ficha", subtitle: "Registro y entrega" },
-];
+type View = "crear" | "catalogo" | "mis-apps" | "revision";
+
+function currentView(): View {
+  const h = location.hash.replace("#", "");
+  return (["crear", "catalogo", "mis-apps", "revision"] as View[]).includes(h as View) ? (h as View) : "crear";
+}
 
 export default function App() {
-  const [step, setStepRaw] = useState(0);
-  const [maxStep, setMaxStep] = useState(0);
-  const setStep = (fn: number | ((s: number) => number)) =>
-    setStepRaw((s) => {
-      const n = typeof fn === "function" ? fn(s) : fn;
-      setMaxStep((m) => Math.max(m, n));
-      return n;
-    });
-  const [answers, setAnswers] = useState<Answers>(emptyAnswers);
-  const [clarifications, setClarifications] = useState<Clarification[]>([]);
-  const [accepted, setAccepted] = useState<boolean[]>([]);
-  const [acceptedAt, setAcceptedAt] = useState<string | null>(null);
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [findings, setFindings] = useState<ScanFinding[]>([]);
-  const [status, setStatus] = useState<{ modoDemo: boolean; correoDpd: string }>({ modoDemo: false, correoDpd: "" });
+  const [me, setMe] = useState<Me | null>(null);
+  const [meError, setMeError] = useState("");
+  const [status, setStatus] = useState<Status>({ modoDemo: false, correoDpd: "" });
+  const [view, setView] = useState<View>(currentView);
+  const [editId, setEditId] = useState<{ id: string; n: number } | null>(null);
 
   useEffect(() => {
-    fetch("/api/estado")
-      .then((r) => r.json())
-      .then(setStatus)
-      .catch(() => {});
+    api<Status>("/api/estado").then(setStatus).catch(() => {});
+    api<Me>("/api/yo").then(setMe).catch((e) => setMeError(e.message));
+    const onHash = () => setView(currentView());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  const update = (p: Partial<Answers>) => setAnswers((a) => ({ ...a, ...p }));
-  const assessment = useMemo(() => assess(answers), [answers]);
-  const commitments = useMemo(() => getCommitments(assessment), [assessment]);
-  const allAccepted = commitments.length > 0 && commitments.every((_, i) => accepted[i]);
+  const go = (v: View) => {
+    location.hash = v;
+    setView(v);
+  };
 
-  // Si cambian los compromisos (porque cambian las respuestas) hay que volver a aceptarlos.
-  const commitmentsKey = commitments.join("|");
-  useEffect(() => {
-    setAccepted([]);
-    setAcceptedAt(null);
-  }, [commitmentsKey]);
-
-  const details = clarifications
-    .filter((c) => c.answer.trim())
-    .map((c) => `- ${c.question} ${c.answer}`)
-    .join("\n");
-
-  const canNext = (() => {
-    if (step === 0) return answers.description.trim().length >= 15 && !!answers.appName.trim() && !!answers.owner.trim() && !!answers.department.trim();
-    if (step === 1) return answers.data.length > 0 && (answers.origin.length > 0 || answers.data.includes("ninguno"));
-    if (step === 3) return assessment.level !== "no_permitido" && allAccepted;
-    if (step === 4) return versions.length > 0;
-    return step < STEPS.length - 1;
-  })();
-  const missingHint = [
-    "Completa la descripción (al menos una frase), el nombre, la persona responsable y el departamento.",
-    "Marca al menos un tipo de información y su origen.",
-    "",
-    assessment.level === "no_permitido" ? "Esta aplicación no se puede construir en autoservicio. Puedes revisar tus respuestas o ir directamente a la ficha." : "Acepta todos los compromisos para continuar.",
-    "Espera a que se genere la primera versión.",
-    "",
-  ][step];
-
-  function next() {
-    if (step === 3 && !acceptedAt) setAcceptedAt(new Date().toISOString());
-    setStep((s) => Math.min(s + 1, STEPS.length - 1));
-    window.scrollTo({ top: 0 });
+  async function switchProfile(perfil: string) {
+    await api("/api/dev/perfil", { perfil });
+    location.reload();
   }
 
-  const style = LEVEL_STYLE[assessment.level];
+  if (meError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6 text-center">
+        <p>No se ha podido identificar tu usuario. Accede a través de la intranet municipal o la VPN.</p>
+      </div>
+    );
+  }
+  if (!me) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="animate-spin" />
+      </div>
+    );
+  }
+
+  const tabs: { id: View; label: string; show: boolean }[] = [
+    { id: "crear", label: "Crear app", show: me.esPlantilla },
+    { id: "catalogo", label: "Catálogo", show: true },
+    { id: "mis-apps", label: "Mis apps", show: me.esPlantilla },
+    { id: "revision", label: "Revisión", show: me.esRevisor },
+  ];
+  const visible = tabs.filter((t) => t.show);
+  const active = visible.some((t) => t.id === view) ? view : visible[0].id;
 
   return (
     <div className="min-h-screen bg-muted/40">
       <header className="border-b bg-[#1f4e79] text-white">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
           <Building2 className="size-7" />
           <div className="flex-1">
             <h1 className="text-lg leading-tight font-semibold">Taller de Apps IA</h1>
-            <p className="text-xs text-white/80">Crea tus propias herramientas de forma segura · Ayuntamiento</p>
+            <p className="text-xs text-white/80">Herramientas creadas por y para el personal municipal · Intranet</p>
           </div>
           {status.modoDemo && (
             <span className="flex items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-xs" title="No hay clave de IA configurada">
               <FlaskConical className="size-3.5" /> Modo demostración
             </span>
           )}
+          <span className="flex items-center gap-1.5 text-xs">
+            <UserRound className="size-4" />
+            {me.perfilesPrueba.length > 0 ? (
+              <select
+                aria-label="Perfil de prueba"
+                className="rounded bg-white/15 px-1 py-0.5 text-white [&>option]:text-black"
+                value={me.perfilActual ?? ""}
+                onChange={(e) => switchProfile(e.target.value)}
+              >
+                {me.perfilesPrueba.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    Perfil de prueba: {p.etiqueta}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              me.nombre
+            )}
+          </span>
         </div>
+        <nav className="mx-auto flex max-w-6xl gap-1 px-4" aria-label="Secciones">
+          {visible.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => go(t.id)}
+              aria-current={active === t.id ? "page" : undefined}
+              className={cn(
+                "rounded-t-lg px-3 py-2 text-sm",
+                active === t.id ? "bg-muted/95 font-medium text-foreground" : "text-white/85 hover:bg-white/10",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
       </header>
 
       <div className="mx-auto max-w-6xl px-4 py-6">
-        <nav aria-label="Pasos" className="mb-6">
-          <ol className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-            {STEPS.map((s, i) => {
-              // Tras la evaluación solo se puede avanzar con los compromisos aceptados.
-              const blocked = assessment.level === "no_permitido";
-              const reachable =
-                i <= maxStep && (i <= 3 || (i === 5 && blocked) || (!blocked && allAccepted && (i === 4 || versions.length > 0)));
-              return (
-                <li key={s.title}>
-                  <button
-                    type="button"
-                    disabled={!reachable}
-                    onClick={() => setStep(i)}
-                    aria-current={i === step ? "step" : undefined}
-                    className={cn(
-                      "w-full rounded-lg border bg-card p-2 text-left transition-colors disabled:opacity-50",
-                      i === step && "border-blue-600 ring-2 ring-blue-600/20",
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span
-                        className={cn(
-                          "flex size-5 items-center justify-center rounded-full text-[0.65rem] font-semibold",
-                          i < step ? "bg-blue-600 text-white" : "bg-muted",
-                        )}
-                      >
-                        {i < step ? <Check className="size-3" /> : i + 1}
-                      </span>
-                      {s.title}
-                    </span>
-                    <span className="hidden text-xs text-muted-foreground lg:block">{s.subtitle}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
-
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h2 className="text-xl font-semibold">{STEPS[step].title}</h2>
-            <p className="text-sm text-muted-foreground">{STEPS[step].subtitle}</p>
+        {/* El asistente se mantiene montado para no perder el trabajo al cambiar de pestaña. */}
+        {me.esPlantilla && (
+          <div hidden={active !== "crear"}>
+            <Builder me={me} status={status} editId={editId} />
           </div>
-          {step >= 1 && step !== 3 && (
-            <span className={cn("rounded-full border px-3 py-1 text-xs font-medium", style.box)}>{LEVEL_INFO[assessment.level].label}</span>
-          )}
-        </div>
-
-        <main>
-          {step === 0 && <IdeaStep answers={answers} update={update} clarifications={clarifications} setClarifications={setClarifications} />}
-          {step === 1 && <DataStep answers={answers} update={update} />}
-          {step === 2 && <UsageStep answers={answers} update={update} />}
-          {step === 3 && <AssessmentStep assessment={assessment} commitments={commitments} accepted={accepted} setAccepted={setAccepted} />}
-          {step === 4 && (
-            <BuildStep
-              answers={answers}
-              assessment={assessment}
-              details={details}
-              versions={versions}
-              setVersions={setVersions}
-              setFindings={setFindings}
-            />
-          )}
-          {step === 5 && (
-            <FichaStep
-              ficha={{ answers, assessment, commitments, acceptedAt, versions: versions.length, findings }}
-              dpdEmail={status.correoDpd}
-            />
-          )}
-        </main>
-
-        <div className="mt-6 flex flex-wrap items-center gap-3 border-t pt-4">
-          <Button variant="outline" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>
-            <ArrowLeft /> Atrás
-          </Button>
-          <p className="flex-1 text-right text-xs text-muted-foreground">{!canNext && missingHint}</p>
-          {step === 3 && assessment.level === "no_permitido" ? (
-            <Button variant="outline" onClick={() => setStep(5)}>
-              Ir a la ficha <ArrowRight />
-            </Button>
-          ) : (
-            step < STEPS.length - 1 && (
-              <Button onClick={next} disabled={!canNext}>
-                Siguiente <ArrowRight />
-              </Button>
-            )
-          )}
-        </div>
+        )}
+        {active === "catalogo" && <Catalog me={me} />}
+        {active === "mis-apps" && (
+          <MyApps
+            onEdit={(id) => {
+              setEditId({ id, n: Date.now() });
+              go("crear");
+            }}
+          />
+        )}
+        {active === "revision" && <Review me={me} />}
       </div>
     </div>
   );

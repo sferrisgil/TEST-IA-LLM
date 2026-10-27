@@ -97,12 +97,12 @@ ${c.syntheticDataOnly ? '<div class="banner" role="alert">PROTOTIPO – usar sol
   };
   var bb = document.getElementById('borrar');
   if (bb) bb.onclick = function () { if (confirm('¿Borrar todos los datos?')) { items = []; guardar(); pintar(); } };
-  var r = document.getElementById('resumir');
-  if (r) r.onclick = async function () {
+  ${c.ai ? `var r = document.getElementById('resumir');
+  r.onclick = async function () {
     var out = document.getElementById('ia'); out.textContent = 'Pensando…';
     try { out.textContent = await window.IAMunicipal.preguntar('Resume: ' + items.map(function (x) { return x.titulo; }).join('; ')); }
     catch (e) { out.textContent = e.message; }
-  };
+  };` : ""}
   pintar();
 </script>
 </body>

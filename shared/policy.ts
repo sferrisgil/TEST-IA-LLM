@@ -109,8 +109,8 @@ export const AUDIENCES: { id: Audience; label: string; help: string; weight: num
   { id: "equipo", label: "Mi equipo (menos de 10 personas)", help: "Compañeros/as de mi unidad", weight: 1 },
   { id: "departamento", label: "Todo mi departamento o área", help: "Varias unidades de un mismo servicio", weight: 2 },
   { id: "plantilla", label: "Toda la plantilla municipal", help: "Cualquier empleado/a del Ayuntamiento", weight: 3 },
-  { id: "externos", label: "Empresas o entidades externas", help: "Contratistas, proveedores, otras administraciones", weight: 4 },
-  { id: "publico", label: "Ciudadanía en general", help: "Cualquier persona desde internet", weight: 4 },
+  { id: "externos", label: "Plantilla y empresas contratistas", help: "Contratas con acceso al Ayuntamiento por VPN", weight: 3 },
+  { id: "publico", label: "Ciudadanía en general", help: "Desde internet (fase futura: de momento solo se publica en la intranet)", weight: 4 },
 ];
 
 export const ORIGINS: { id: Origin; label: string }[] = [
@@ -244,7 +244,8 @@ export function assess(answers: Answers): Assessment {
   const personalData = [...data].some((c) => catInfo(c).personal);
   const sensitive = SENSITIVE.filter((c) => data.has(c));
   const onlyPublic = [...data].every((c) => c === "publicos" || c === "ninguno");
-  const sharedOutside = answers.audience === "externos" || answers.audience === "publico";
+  const contractors = answers.audience === "externos";
+  const isPublic = answers.audience === "publico";
 
   let level = "bajo" as RiskLevel;
   const raise = (to: RiskLevel, reason: string) => {
@@ -279,8 +280,8 @@ export function assess(answers: Answers): Assessment {
   if (answers.storage === "nube_externa" && personalData) {
     raise("no_permitido", "Guardar datos personales en servicios externos no contratados por el Ayuntamiento no está permitido.");
   }
-  if (sensitive.length > 0 && sharedOutside) {
-    raise("no_permitido", "Datos especialmente protegidos no pueden exponerse a empresas externas ni a la ciudadanía desde una app de autoservicio.");
+  if (sensitive.length > 0 && isPublic) {
+    raise("no_permitido", "Datos especialmente protegidos no pueden exponerse a la ciudadanía desde una app de autoservicio.");
   }
   if (sensitive.length > 0 && answers.aiUse === "con_datos") {
     raise("no_permitido", "No se permite enviar datos especialmente protegidos a un servicio de IA.");
@@ -299,8 +300,11 @@ export function assess(answers: Answers): Assessment {
   if (answers.volume === "masivo" && personalData) {
     raise("alto", "Trata datos personales a gran escala.");
   }
-  if (personalData && sharedOutside) {
-    raise("alto", "Expone datos personales fuera del Ayuntamiento.");
+  if (personalData && isPublic) {
+    raise("alto", "Expone datos personales a la ciudadanía.");
+  }
+  if (sensitive.length > 0 && contractors) {
+    raise("alto", "Datos especialmente protegidos accesibles por empresas contratistas.");
   }
   if (answers.storage === "servidor_municipal" && personalData && answers.audience !== "personal") {
     raise("alto", "Necesita un servidor con datos personales compartidos: requiere alta en los sistemas de TI.");
@@ -308,7 +312,10 @@ export function assess(answers: Answers): Assessment {
 
   // --- Riesgo medio ---------------------------------------------------------
   if (personalData) raise("medio", "Trata datos personales: aplica el RGPD.");
-  if (data.has("internos") && sharedOutside) raise("medio", "Comparte información interna fuera del Ayuntamiento.");
+  if (contractors && (personalData || data.has("internos"))) {
+    raise("medio", "Accederán empresas contratistas: solo las autorizadas y con contrato que cubra este uso.");
+  }
+  if (data.has("internos") && isPublic) raise("medio", "Comparte información interna fuera del Ayuntamiento.");
   if (answers.audience === "publico") raise("medio", "Será usada por la ciudadanía: imagen institucional, accesibilidad y seguridad públicas.");
   if (answers.audience === "plantilla" || answers.audience === "departamento") {
     if (!onlyPublic) raise("medio", "Se compartirá con muchas personas de la organización.");
@@ -366,8 +373,8 @@ export function assess(answers: Answers): Assessment {
   if (answers.origin.includes("ciudadanos") && personalData) obligations.push("Informa a los interesados con la cláusula informativa del Ayuntamiento (arts. 13-14 RGPD).");
   if (level === "alto") obligations.push("Antes de usar datos reales: Evaluación de Impacto (EIPD, art. 35 RGPD) y validación de TI.");
   if (answers.decisions === "apoyo" || answers.decisions === "automatica") obligations.push("Documenta cómo se revisa humanamente cada resultado (Reglamento de IA y art. 22 RGPD).");
-  if (answers.audience === "externos") obligations.push("Si la usan empresas externas, debe existir un contrato de encargo de tratamiento o acuerdo de confidencialidad.");
-  if (answers.audience === "publico") obligations.push("Publicación en la sede/web municipal a través del área de Comunicación y TI, con declaración de accesibilidad.");
+  if (contractors) obligations.push("Las contratas que la usen deben tener contrato de encargo de tratamiento o acuerdo de confidencialidad que cubra este uso.");
+  if (isPublic) obligations.push("La publicación en internet llegará en una fase posterior y requerirá aprobación de TI y Comunicación, con declaración de accesibilidad. Mientras tanto se publicará solo en la intranet.");
   if (answers.aiUse !== "no") obligations.push("Indica en la app que usa IA y que sus respuestas pueden contener errores (transparencia, Reglamento de IA).");
   if (answers.retention === "indefinida" && personalData) obligations.push("Define un plazo de conservación: los datos personales no pueden guardarse indefinidamente.");
   if (answers.audience !== "personal") obligations.push("Nombra a una persona responsable de mantenerla y de darla de baja cuando deje de usarse.");

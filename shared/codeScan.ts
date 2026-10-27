@@ -147,10 +147,46 @@ const PREVIEW_STORAGE_SHIM = `
 </script>`;
 
 /**
- * Inserta la CSP (y, si procede, el puente de IA) al principio del <head>.
- * Debe aplicarse siempre: en la vista previa y en el fichero descargado.
+ * Apps publicadas: se ejecutan aisladas (sin acceso al almacenamiento del
+ * servidor). El visor de la plataforma les pasa sus datos guardados en el
+ * fragmento de la URL (que nunca viaja al servidor) y recibe los cambios por
+ * mensajes, guardándolos en el navegador de la persona usuaria, por app.
  */
-export function hardenHtml(html: string, constraints: GenerationConstraints, opts: { preview?: boolean } = {}): string {
+const PUBLISHED_STORAGE_SHIM = `
+<script>
+(function(){
+  var initial = {};
+  try {
+    var h = location.hash.slice(1);
+    if (h) initial = JSON.parse(decodeURIComponent(escape(atob(h)))) || {};
+  } catch (e) { initial = {}; }
+  function mem(data, persist){
+    var s = {}; Object.keys(data).forEach(function(k){ s[k] = String(data[k]); });
+    function sync(){ if (persist && window.parent !== window) window.parent.postMessage({ tipo: 'almacen', datos: s }, '*'); }
+    return {
+      getItem: function(k){ return Object.prototype.hasOwnProperty.call(s, k) ? s[k] : null; },
+      setItem: function(k, v){ s[k] = String(v); sync(); },
+      removeItem: function(k){ delete s[k]; sync(); },
+      clear: function(){ s = {}; sync(); },
+      key: function(i){ return Object.keys(s)[i] || null; },
+      get length(){ return Object.keys(s).length; }
+    };
+  }
+  try { Object.defineProperty(window, 'localStorage', { value: mem(initial, true), configurable: true }); } catch (e) {}
+  try { Object.defineProperty(window, 'sessionStorage', { value: mem({}, false), configurable: true }); } catch (e) {}
+})();
+</script>`;
+
+/**
+ * Inserta la CSP (y, si procede, el puente de IA) al principio del <head>.
+ * Debe aplicarse siempre: en la vista previa, en la app publicada y en el
+ * fichero descargado.
+ */
+export function hardenHtml(
+  html: string,
+  constraints: GenerationConstraints,
+  opts: { preview?: boolean; published?: boolean } = {},
+): string {
   let doc = html.replace(/<!--plataforma:inicio-->[\s\S]*?<!--plataforma:fin-->/g, "");
   // Eliminamos cualquier CSP o <base> que haya escrito la IA: manda la nuestra.
   doc = doc.replace(/<meta[^>]+http-equiv\s*=\s*["']?content-security-policy[^>]*>/gi, "");
@@ -164,6 +200,7 @@ export function hardenHtml(html: string, constraints: GenerationConstraints, opt
     `<meta name="referrer" content="no-referrer">` +
     (constraints.ai ? AI_BRIDGE : "") +
     (opts.preview && constraints.storage !== "ninguno" ? PREVIEW_STORAGE_SHIM : "") +
+    (opts.published && constraints.storage !== "ninguno" ? PUBLISHED_STORAGE_SHIM : "") +
     `<!--plataforma:fin-->`;
   return doc.replace(/<head([^>]*)>/i, `<head$1>${block}`);
 }
