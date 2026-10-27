@@ -13,6 +13,7 @@
  * (Reglamento (UE) 2024/1689).
  */
 
+import { computeDerivation, emptyScale, sanitizeScale, type Derivation, type Scale } from "./derivation";
 import { assessAi, DEFAULT_MODELS, emptyAiAnswers, maxInputChars, sanitizeAiAnswers, type AiAnswers, type AiAssessment, type ModelInfo } from "./aiAct";
 
 export type DataCategory =
@@ -64,6 +65,8 @@ export interface Answers {
   detectedCategories: DataCategory[];
   /** Cuestionario de IA (solo aplica si aiUse !== "no"). */
   ai: AiAnswers;
+  /** Escala prevista de uso. */
+  scale: Scale;
 }
 
 export type RiskLevel = "bajo" | "medio" | "alto" | "no_permitido";
@@ -110,6 +113,8 @@ export interface Assessment {
   undeclared: DataCategory[];
   /** Evaluación de IA (Reglamento de IA, complejidad, modelo) o null si no usa IA. */
   ai: AiAssessment | null;
+  /** Derivación a TI / DPD cuando la propuesta supera el autoservicio. */
+  derivation: Derivation;
 }
 
 export const DATA_CATEGORIES: {
@@ -241,6 +246,7 @@ export function emptyAnswers(): Answers {
     detectedCategories: [],
     appKind: "aplicacion",
     ai: emptyAiAnswers(),
+    scale: emptyScale(),
   };
 }
 
@@ -278,6 +284,7 @@ export function sanitizeAnswers(input: unknown): Answers {
     detectedCategories: arr(a.detectedCategories, cats),
     appKind: a.appKind === "automatizacion" ? "automatizacion" : "aplicacion",
     ai: sanitizeAiAnswers(a.ai),
+    scale: sanitizeScale(a.scale),
   };
 }
 
@@ -507,7 +514,14 @@ export function assess(answers: Answers, models: ModelInfo[] = DEFAULT_MODELS): 
   const ensCategory: Assessment["ensCategory"] =
     RANK[level] >= RANK.alto ? "alta" : level === "medio" ? "media" : "básica";
 
-  return { level, score, ensCategory, reasons, controls, obligations, constraints, personalData, undeclared, ai };
+  const derivation = computeDerivation(answers, level, ai);
+  if (derivation.required) {
+    obligations.unshift(
+      `Esta propuesta debe estudiarla ${derivation.recipients.map((r) => (r === "ti" ? "TI" : "el DPD")).join(" y ")}: envíales la ficha desde la plataforma. No podrás publicarla por tu cuenta.`,
+    );
+  }
+
+  return { level, score, ensCategory, reasons, controls, obligations, constraints, personalData, undeclared, ai, derivation };
 }
 
 /** Compromisos que la persona debe aceptar antes de construir. */

@@ -11,6 +11,7 @@ import { AUTH_MODE, currentDevProfile, DEV_PROFILES, requireIdentity, requireSta
 import { internalOnly, PRIVATE_NETWORKS } from "./server/network";
 import { registerPortal } from "./server/portal";
 import { callModel, models } from "./server/models";
+import { registerDerivations } from "./server/derivations";
 import * as db from "./server/db";
 import { store } from "./server/store";
 
@@ -220,6 +221,7 @@ app.get("/api/estado", (_req, res) => {
     modelo: DEMO ? null : MODEL,
     correoDpd: process.env.DPD_EMAIL || "",
     modoAutenticacion: AUTH_MODE,
+    avisosConfigurados: !!(process.env.SMTP_HOST || process.env.DERIVATION_WEBHOOK_URL),
     // Fase 2 (publicación en internet): todavía no disponible.
     accesoExterno: false,
   });
@@ -423,6 +425,7 @@ app.post("/api/plataforma-prueba", requireStaff, rateLimit(300, 5 * 60_000), asy
 });
 
 registerPortal(app, { audit, askAi, rateLimit, models, isAiRefusal: (e) => e instanceof AiRefused });
+registerDerivations(app, { audit, rateLimit, models });
 
 // ---------------------------------------------------------------------------
 

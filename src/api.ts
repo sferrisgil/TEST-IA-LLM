@@ -50,3 +50,35 @@ export const STATUS_LABEL: Record<PublicationStatus, string> = {
 };
 
 export const fmtDate = (s: string) => new Date(s).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+
+export type RequestStatus = "recibida" | "en_estudio" | "aprobada" | "rechazada" | "proyecto_ti";
+
+export const REQUEST_STATUS_LABEL: Record<RequestStatus, string> = {
+  recibida: "Recibida",
+  en_estudio: "En estudio",
+  aprobada: "Aprobada",
+  rechazada: "Rechazada",
+  proyecto_ti: "Pasa a proyecto de TI",
+};
+
+export interface DerivationView {
+  id: string;
+  aplicacion: string;
+  solicitante: string;
+  departamento: string;
+  nivel: RiskLevel;
+  reglamentoIA: string | null;
+  destinatarios: ("ti" | "dpd")[];
+  motivos: { text: string; to: ("ti" | "dpd")[] }[];
+  estado: RequestStatus;
+  creada: string;
+  actualizada: string;
+  prototipo: string | null;
+  comentarios: { date: string; user: string; name: string; role: "solicitante" | "revision"; text: string }[];
+  avisos: { date: string; channel: string; to: string; ok: boolean; detail?: string }[];
+  publicacion: string | null;
+  ficha?: string;
+  mensaje?: string;
+  contacto?: string;
+  aviso?: string;
+}

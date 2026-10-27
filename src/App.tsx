@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Building2, FlaskConical, Loader2, UserRound } from "lucide-react";
 import { Builder, type Status } from "@/src/views/Builder";
 import { Catalog, MyApps, Review } from "@/src/views/Portal";
+import { MyRequests, ReviewRequests } from "@/src/views/Requests";
 import { api, type Me } from "@/src/api";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>({ modoDemo: false, correoDpd: "" });
   const [view, setView] = useState<View>(currentView);
   const [editId, setEditId] = useState<{ id: string; n: number } | null>(null);
+  const [reviewTab, setReviewTab] = useState<"solicitudes" | "publicaciones">("solicitudes");
 
   useEffect(() => {
     api<Status>("/api/estado").then(setStatus).catch(() => {});
@@ -122,14 +124,41 @@ export default function App() {
         )}
         {active === "catalogo" && <Catalog me={me} />}
         {active === "mis-apps" && (
-          <MyApps
-            onEdit={(id) => {
-              setEditId({ id, n: Date.now() });
-              go("crear");
-            }}
-          />
+          <div className="space-y-8">
+            <MyRequests />
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Mis aplicaciones publicadas</h2>
+              <MyApps
+                onEdit={(id) => {
+                  setEditId({ id, n: Date.now() });
+                  go("crear");
+                }}
+              />
+            </section>
+          </div>
         )}
-        {active === "revision" && <Review me={me} />}
+        {active === "revision" && (
+          <div className="space-y-4">
+            <div className="flex gap-1 border-b">
+              {(
+                [
+                  ["solicitudes", "Propuestas derivadas"],
+                  ["publicaciones", "Publicaciones"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setReviewTab(id)}
+                  className={cn("-mb-px border-b-2 px-3 py-2 text-sm", reviewTab === id ? "border-blue-600 font-medium" : "border-transparent text-muted-foreground")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {reviewTab === "solicitudes" ? <ReviewRequests me={me} /> : <Review me={me} />}
+          </div>
+        )}
       </div>
     </div>
   );

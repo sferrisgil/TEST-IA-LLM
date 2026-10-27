@@ -11,8 +11,9 @@ import { BuildStep, type Version } from "@/src/steps/BuildStep";
 import { FichaStep } from "@/src/steps/FichaStep";
 import { PublishPanel } from "@/src/steps/PublishPanel";
 import { AiStep } from "@/src/steps/AiStep";
+import { DerivationPanel } from "@/src/steps/DerivationPanel";
 import { DEFAULT_MODELS, type ModelInfo } from "@/shared/aiAct";
-import { api, type Me } from "@/src/api";
+import { api, type DerivationView, type Me } from "@/src/api";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
@@ -50,6 +51,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
   const [members, setMembers] = useState("");
   const [loadError, setLoadError] = useState("");
   const [models, setModels] = useState<ModelInfo[]>(DEFAULT_MODELS);
+  const [request, setRequest] = useState<DerivationView | null>(null);
 
   // Catálogo real de modelos del Ayuntamiento (el servidor evalúa con el mismo).
   useEffect(() => {
@@ -99,6 +101,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
     setVersions([]);
     setFindings([]);
     setPublishedId(null);
+    setRequest(null);
     setEditing(false);
     setMembers("");
     setStepRaw(0);
@@ -218,7 +221,19 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
           {step === 1 && <DataStep answers={answers} update={update} />}
           {step === 2 && <UsageStep answers={answers} update={update} />}
           {step === 3 && <AiStep answers={answers} update={update} result={assessment.ai} />}
-          {step === 4 && <AssessmentStep assessment={assessment} commitments={commitments} accepted={accepted} setAccepted={setAccepted} />}
+          {step === 4 && (
+            <div className="space-y-4">
+              <DerivationPanel
+                answers={answers}
+                assessment={assessment}
+                code={versions[versions.length - 1]?.code ?? null}
+                acceptedAt={acceptedAt}
+                request={request}
+                setRequest={setRequest}
+              />
+              <AssessmentStep assessment={assessment} commitments={commitments} accepted={accepted} setAccepted={setAccepted} />
+            </div>
+          )}
           {step === 5 && (
             <BuildStep
               answers={answers}
@@ -231,6 +246,14 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
           )}
           {step === 6 && (
             <div className="space-y-4">
+              <DerivationPanel
+                answers={answers}
+                assessment={assessment}
+                code={versions[versions.length - 1]?.code ?? null}
+                acceptedAt={acceptedAt}
+                request={request}
+                setRequest={setRequest}
+              />
               {versions.length > 0 && assessment.level !== "no_permitido" && (
                 <PublishPanel
                   answers={answers}

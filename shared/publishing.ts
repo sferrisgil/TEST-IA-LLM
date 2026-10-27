@@ -15,6 +15,7 @@ export interface Identity {
   user: string;
   name: string;
   department: string;
+  email?: string;
   groups: string[];
   isStaff: boolean;
   isContractor: boolean;
@@ -64,6 +65,9 @@ export interface PublishDecision {
 export function publishDecision(answers: Answers, a: Assessment): PublishDecision {
   if (a.level === "no_permitido") {
     return { allowed: false, needsReview: false, reasons: ["Las aplicaciones no permitidas en autoservicio no pueden publicarse."] };
+  }
+  if (a.derivation.required) {
+    return { allowed: false, needsReview: true, reasons: ["Esta propuesta requiere el estudio de TI/DPD: envíales la propuesta. Si la aprueban, la publicarán ellos."] };
   }
   const reasons: string[] = [];
   if (a.level === "alto") reasons.push("Riesgo alto: debe revisarla TI y el DPD (solo como prototipo con datos ficticios salvo EIPD aprobada).");

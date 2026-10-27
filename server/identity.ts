@@ -18,6 +18,7 @@ const H_USER = (env.AUTH_HEADER_USER || "x-remote-user").toLowerCase();
 const H_NAME = (env.AUTH_HEADER_NAME || "x-remote-name").toLowerCase();
 const H_GROUPS = (env.AUTH_HEADER_GROUPS || "x-remote-groups").toLowerCase();
 const H_DEPT = (env.AUTH_HEADER_DEPARTMENT || "x-remote-department").toLowerCase();
+const H_EMAIL = (env.AUTH_HEADER_EMAIL || "x-remote-email").toLowerCase();
 const G_STAFF = (env.GROUP_STAFF || "plantilla").toLowerCase();
 const G_CONTRACTOR = (env.GROUP_CONTRACTOR || "contratas").toLowerCase();
 const G_REVIEWER = (env.GROUP_REVIEWER || "revisores-apps").toLowerCase();
@@ -42,12 +43,13 @@ function header(req: Request, name: string): string {
   }
 }
 
-function build(user: string, name: string, department: string, groups: string[]): Identity {
+function build(user: string, name: string, department: string, groups: string[], email = ""): Identity {
   const g = groups.map((x) => x.toLowerCase());
   return {
     user: user.toLowerCase(),
     name: name || user,
     department,
+    email: /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) ? email : undefined,
     groups: g,
     isStaff: g.includes(G_STAFF),
     isContractor: g.includes(G_CONTRACTOR),
@@ -72,10 +74,16 @@ export function identify(req: Request): Identity | null {
     if (!user) return null;
     // Algunos proxies envían "DOMINIO\\usuario" o "usuario@dominio".
     const clean = user.replace(/^.*\\/, "").replace(/@.*$/, "");
-    return build(clean, header(req, H_NAME), header(req, H_DEPT), header(req, H_GROUPS).split(/[,;]/).map((s) => s.trim()).filter(Boolean));
+    return build(
+      clean,
+      header(req, H_NAME),
+      header(req, H_DEPT),
+      header(req, H_GROUPS).split(/[,;]/).map((s) => s.trim()).filter(Boolean),
+      header(req, H_EMAIL),
+    );
   }
   const p = DEV_PROFILES[currentDevProfile(req)];
-  return build(p.user, p.name, p.department, p.groups);
+  return build(p.user, p.name, p.department, p.groups, `${p.user}@ayuntamiento.example`);
 }
 
 declare global {

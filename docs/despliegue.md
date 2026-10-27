@@ -101,6 +101,13 @@ NODE_ENV=production node dist/server.cjs   # como servicio systemd, usuario sin 
 
 Copias de seguridad: basta con `DATA_DIR` (`publicaciones.json`, `apps/*.html` y `datos.sqlite`). Para copiar la base de datos en caliente usa `sqlite3 datos.sqlite ".backup copia.sqlite"`. Los registros de auditoría salen por la salida estándar en JSON (enviar a journald/SIEM).
 
+### Avisos de propuestas derivadas
+
+- **Correo**: configurar `SMTP_HOST` (servidor de correo corporativo), `MAIL_FROM`, `TI_EMAIL` y `DPD_EMAIL`. Cada propuesta llega con la ficha en Markdown y en JSON adjuntas y un enlace a la bandeja de revisión. Se recomienda usar buzones de grupo.
+- **Tickets**: con `DERIVATION_WEBHOOK_URL` la plataforma envía un `POST` JSON (`evento`, `solicitud` con motivos, destinatarios y estado, y `ficha`) en cada propuesta nueva, actualización o comentario, para crear o actualizar la incidencia en GLPI, Redmine, Jira, OTRS, etc. (directamente o mediante un pequeño adaptador). `DERIVATION_WEBHOOK_TOKEN` se envía como `Authorization: Bearer`.
+- El resultado de cada aviso (enviado, error, sin configurar) queda registrado en la solicitud y se ve en la bandeja.
+- En producción, si no hay SMTP, los avisos por correo constan como «SMTP no configurado» y las propuestas siguen llegando a la bandeja.
+
 ## Fase 2 (futura): acceso público a apps concretas
 
 No está activada. La base ya existe: las apps pensadas para la ciudadanía quedan marcadas como «acceso externo solicitado» (`externalAccess`). Propuesta:

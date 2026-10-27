@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Choice, Field, Section } from "@/components/fields";
+import { SCALE_OPTIONS, type Scale } from "@/shared/derivation";
 import { AI_USES, AUDIENCES, DB_SCOPES, DECISIONS, INTEGRATIONS, RETENTIONS, STORAGES, type Answers } from "@/shared/policy";
 
 const COMPARISON: [string, string, string][] = [
@@ -53,6 +54,29 @@ export function UsageStep({ answers, update }: { answers: Answers; update: (p: P
             <Choice options={DB_SCOPES} value={answers.dbScope} onChange={(dbScope) => update({ dbScope })} />
           </div>
         )}
+      </Section>
+
+      <Section
+        title="¿Cuánto se va a usar?"
+        description="Una estimación en los momentos de más actividad. Si supera lo que admite la plataforma, la propuesta se enviará a TI."
+      >
+        {(
+          [
+            ["users", "Personas usándola a la vez"],
+            ["dailyOps", "Operaciones al día (altas, cambios, consultas o ejecuciones)"],
+            ["records", "Registros acumulados previstos"],
+          ] as [keyof Scale, string][]
+        ).map(([k, title]) => (
+          <div key={k} className="space-y-2">
+            <p className="text-sm font-medium">{title}</p>
+            <Choice
+              options={[...SCALE_OPTIONS[k]] as { id: string; label: string }[]}
+              value={answers.scale[k]}
+              onChange={(v: string) => update({ scale: { ...answers.scale, [k]: v } })}
+              columns={3}
+            />
+          </div>
+        ))}
       </Section>
 
       <Section title="¿Usará inteligencia artificial mientras se usa?" description="Por ejemplo, para resumir, redactar o clasificar textos.">

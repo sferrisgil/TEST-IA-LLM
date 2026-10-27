@@ -41,6 +41,26 @@ La app generada queda ligada a ese modelo: el servidor solo llama al modelo asig
 
 El catálogo lo mantiene TI en un fichero JSON (`MODELS_FILE`, ejemplo en [`config/modelos.ejemplo.json`](config/modelos.ejemplo.json)). Admite modelos de Gemini y cualquier servidor compatible con la API de OpenAI (vLLM, Ollama…), por ejemplo un **modelo local** para tratar datos personales sin que salgan del Ayuntamiento.
 
+## Derivación a TI y al DPD
+
+Algunas propuestas superan lo que se puede resolver en autoservicio ([`shared/derivation.ts`](shared/derivation.ts)). En ese caso la plataforma **deriva** la propuesta:
+
+| Motivo | Se envía a |
+|---|---|
+| Reglamento de IA: riesgo limitado (transparencia) | DPD |
+| Reglamento de IA: posible alto riesgo (art. 6.3), alto riesgo o práctica prohibida | DPD y TI |
+| La tarea necesita un modelo avanzado (complejidad avanzada o coste alto) o ningún modelo sirve | TI |
+| Volumen de consultas a la IA muy alto | TI |
+| Escala que puede desbordar la plataforma o SQLite: más de 100 usuarios simultáneos, más de 20.000 operaciones al día, más de 50.000 registros (cupo estándar) o de 500.000, o uso intensivo concurrente | TI |
+| Riesgo global alto o no permitido | DPD y TI |
+
+Qué ocurre:
+
+1. En la evaluación aparece un aviso con los motivos y el botón **«Enviar la propuesta a TI/DPD»**. La persona puede añadir un mensaje y un teléfono.
+2. TI y/o el DPD **reciben automáticamente la ficha completa** (Markdown y JSON adjuntos) por **correo** (SMTP) y, si se configura, en la **herramienta de tickets** (webhook). También aparece en la bandeja **Revisión → Propuestas derivadas**.
+3. La persona puede preparar un **prototipo** con datos ficticios y enviarlo como actualización; **no puede publicarlo por su cuenta** (el servidor lo rechaza).
+4. TI/DPD conversan con la persona en la propia solicitud y la resuelven: **en estudio, aprobada, aprobada y publicada** (si hay prototipo), **rechazada** o **pasa a proyecto de TI**. Cada cambio se notifica a la persona solicitante.
+
 ## Dónde guardan los datos las apps
 
 | Opción | Cuándo usarla | Cómo funciona |
@@ -106,6 +126,10 @@ En desarrollo no hay SSO: en la cabecera se puede cambiar de **perfil de prueba*
 | `DPD_EMAIL` | Correo del Delegado de Protección de Datos (botón "Escribir al DPD") |
 | `PORT` | Puerto (por defecto 3000) |
 | `DATA_DIR` | Carpeta de las apps publicadas y de la base de datos `datos.sqlite` (por defecto `data/`) |
+| `TI_EMAIL`, `DPD_EMAIL` | Buzones que reciben las propuestas derivadas |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Servidor de correo para los avisos (sin él, en desarrollo los correos se simulan en el registro) |
+| `DERIVATION_WEBHOOK_URL`, `DERIVATION_WEBHOOK_TOKEN` | Webhook opcional para crear la incidencia en la herramienta de tickets de TI |
+| `AUTH_HEADER_EMAIL` | Cabecera del SSO con el correo de la persona (para avisarla de las respuestas; por defecto `x-remote-email`) |
 | `MODELS_FILE` | Catálogo de modelos de IA (ver `config/modelos.ejemplo.json`). Sin él se usa un catálogo de ejemplo |
 | `LOCAL_MODEL_URL`, `LOCAL_MODEL` | Con el catálogo de ejemplo: URL y nombre de un modelo local compatible con OpenAI (activa el «modelo local») |
 | `DB_MAX_RECORDS_PER_APP` | Máximo de registros por app (por defecto 50.000) |
@@ -125,6 +149,10 @@ shared/pii.ts       Detector y enmascarado de datos personales (sin red)
 shared/codeScan.ts  Revisión del código generado, CSP, puentes de IA y de datos
 shared/publishing.ts Reglas de publicación y control de acceso
 shared/aiAct.ts     Reglamento de IA, complejidad y selección de modelo
+shared/derivation.ts Cuándo y a quién se deriva una propuesta (TI / DPD)
+shared/ficha.ts     Ficha de la propuesta (navegador y servidor)
+server/derivations.ts Solicitudes derivadas: envío, conversación y resolución
+server/notify.ts    Avisos por correo y webhook
 server/models.ts    Catálogo de modelos y conexión (Gemini / compatible OpenAI)
 server.ts           API: evaluar, aclarar, construir, vista previa, IA para apps
 server/portal.ts    Publicación, revisión, catálogo y visor de apps publicadas
