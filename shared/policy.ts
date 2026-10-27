@@ -5,10 +5,15 @@
  * Ayuntamiento (TI + Delegado de Protección de Datos), no la IA: la evaluación
  * es determinista y se recalcula siempre en el servidor.
  *
+ * La parte específica de IA (Reglamento de IA, complejidad y modelo) está en
+ * aiAct.ts y se integra aquí.
+ *
  * Marco de referencia: RGPD (arts. 5, 6, 9, 10, 22, 25, 30, 35), LOPDGDD,
  * Esquema Nacional de Seguridad (RD 311/2022) y Reglamento europeo de IA
  * (Reglamento (UE) 2024/1689).
  */
+
+import { assessAi, DEFAULT_MODELS, emptyAiAnswers, maxInputChars, sanitizeAiAnswers, type AiAnswers, type AiAssessment, type ModelInfo } from "./aiAct";
 
 export type DataCategory =
   | "ninguno"
@@ -34,7 +39,10 @@ export type Decisions = "informativa" | "apoyo" | "automatica" | "perfilado";
 export type Integrations = "ninguna" | "lectura" | "escritura";
 export type Retention = "sesion" | "limitada" | "indefinida";
 
+export type AppKind = "aplicacion" | "automatizacion";
+
 export interface Answers {
+  appKind: AppKind;
   appName: string;
   owner: string;
   department: string;
@@ -54,6 +62,8 @@ export interface Answers {
   retentionDays: number;
   /** Hallazgos del analizador local de ejemplos (solo tipos, nunca valores). */
   detectedCategories: DataCategory[];
+  /** Cuestionario de IA (solo aplica si aiUse !== "no"). */
+  ai: AiAnswers;
 }
 
 export type RiskLevel = "bajo" | "medio" | "alto" | "no_permitido";
@@ -77,6 +87,14 @@ export interface GenerationConstraints {
   privacyNotice: boolean;
   /** Debe incluir un botón para borrar todos los datos guardados. */
   deleteButton: boolean;
+  /** Modelo de IA asignado (id del catálogo) o null. */
+  aiModel: string | null;
+  /** Caracteres máximos por consulta a la IA. */
+  aiMaxInputChars: number;
+  /** Debe indicar que se interactúa con una IA / que el texto es generado (art. 50 RIA). */
+  aiDisclosure: boolean;
+  /** Los resultados de la IA se presentan como borrador que una persona confirma. */
+  aiHumanReview: boolean;
 }
 
 export interface Assessment {
@@ -90,6 +108,8 @@ export interface Assessment {
   personalData: boolean;
   /** Categorías detectadas en los ejemplos que el usuario no marcó. */
   undeclared: DataCategory[];
+  /** Evaluación de IA (Reglamento de IA, complejidad, modelo) o null si no usa IA. */
+  ai: AiAssessment | null;
 }
 
 export const DATA_CATEGORIES: {
@@ -219,6 +239,8 @@ export function emptyAnswers(): Answers {
     retention: "sesion",
     retentionDays: 365,
     detectedCategories: [],
+    appKind: "aplicacion",
+    ai: emptyAiAnswers(),
   };
 }
 
@@ -254,13 +276,15 @@ export function sanitizeAnswers(input: unknown): Answers {
     retention: oneOf(a.retention, RETENTIONS.map((v) => v.id), base.retention),
     retentionDays: Math.min(3650, Math.max(1, Math.round(Number(a.retentionDays) || base.retentionDays))),
     detectedCategories: arr(a.detectedCategories, cats),
+    appKind: a.appKind === "automatizacion" ? "automatizacion" : "aplicacion",
+    ai: sanitizeAiAnswers(a.ai),
   };
 }
 
 const SENSITIVE: DataCategory[] = ["especiales", "penales", "menores", "vulnerables"];
 
 /** Evalúa el riesgo de la aplicación descrita. Determinista y auditable. */
-export function assess(answers: Answers): Assessment {
+export function assess(answers: Answers, models: ModelInfo[] = DEFAULT_MODELS): Assessment {
   // Lo detectado en los ejemplos cuenta aunque el usuario no lo haya marcado.
   const undeclared = answers.detectedCategories.filter((c) => !answers.data.includes(c));
   const data = new Set<DataCategory>([...answers.data, ...answers.detectedCategories]);
@@ -355,6 +379,42 @@ export function assess(answers: Answers): Assessment {
   if (answers.origin.includes("ciudadanos")) raise("medio", "Recoge datos que introducen vecinos/as o empresas.");
   if (answers.origin.includes("sistemas") && personalData) raise("medio", "Usa datos extraídos de sistemas municipales: respeta la finalidad original.");
 
+  // --- Inteligencia artificial: Reglamento de IA, complejidad y modelo --------
+  const ai =
+    answers.aiUse === "no"
+      ? null
+      : assessAi(
+          answers.ai,
+          {
+            appKind: answers.appKind,
+            personalData,
+            sendsPersonalData: answers.aiUse === "con_datos" && personalData,
+            decisions: answers.decisions,
+          },
+          models,
+        );
+  if (ai) {
+    if (ai.category === "prohibida") for (const r of ai.reasons) raise("no_permitido", `Reglamento de IA — práctica prohibida. ${r}`);
+    if (ai.category === "alto_riesgo") for (const r of ai.reasons) raise("alto", `Reglamento de IA — alto riesgo. ${r}`);
+    if (ai.category === "revisar_art6") raise("medio", `Reglamento de IA. ${ai.reasons[0]}`);
+    if (ai.category === "transparencia" && (answers.ai.interaction === "ciudadania" || answers.ai.publishes === "sin_revision")) {
+      raise("medio", "Reglamento de IA — la IA se dirige a la ciudadanía: obligaciones de transparencia.");
+    }
+    if (!ai.recommended && ai.category !== "prohibida") {
+      raise("no_permitido", "Ningún modelo de IA disponible en el Ayuntamiento es adecuado para esta tarea (capacidad, tamaño de los textos, datos personales o idiomas).");
+    }
+    const affectsPeople = answers.decisions !== "informativa" || answers.ai.tasks.includes("recomendar");
+    if (answers.ai.oversight === "ninguna" && affectsPeople) {
+      raise("alto", "La IA influye en decisiones sobre personas sin revisión humana.");
+    }
+    if (answers.appKind === "automatizacion" && answers.ai.oversight === "ninguna" && personalData) {
+      raise("alto", "Automatización con IA que trata datos personales sin supervisión humana.");
+    }
+    if (answers.ai.errorImpact === "alto" && answers.ai.oversight !== "siempre") {
+      raise("medio", "Un error de la IA tendría un impacto alto y no siempre lo revisa una persona.");
+    }
+  }
+
   if (undeclared.length > 0) {
     reasons.push(
       `En tus ejemplos aparecen datos que no habías marcado: ${undeclared.map((c) => catInfo(c).label.toLowerCase()).join(", ")}. Se han tenido en cuenta.`,
@@ -382,7 +442,12 @@ export function assess(answers: Answers): Assessment {
     accessibility: answers.audience === "publico" || answers.audience === "plantilla",
     privacyNotice: personalData,
     deleteButton: personalData || answers.storage !== "ninguno",
+    aiModel: ai?.recommended?.id ?? null,
+    aiMaxInputChars: ai?.recommended ? maxInputChars(ai.recommended) : 0,
+    aiDisclosure: !!ai?.disclosure,
+    aiHumanReview: !!ai?.humanReview,
   };
+  if (!constraints.aiModel) constraints.ai = false;
 
   // --- Controles (lo que la herramienta aplica) ------------------------------
   controls.push("La aplicación no puede enviar datos a internet: se bloquean todas las conexiones externas (política de seguridad de contenido).");
@@ -409,6 +474,14 @@ export function assess(answers: Answers): Assessment {
   if (constraints.deleteButton) controls.push("Incluirá un botón visible para borrar todos los datos.");
   if (constraints.privacyNotice) controls.push("Incluirá un aviso de privacidad con la finalidad y el responsable.");
   if (constraints.ai) controls.push("El asistente de IA de la app solo funciona dentro de la plataforma y enmascara los datos personales antes de enviarlos.");
+  if (constraints.ai && ai?.recommended) {
+    const m = ai.recommended;
+    controls.push(
+      `La IA usará el modelo «${m.name}» (${m.hosting === "local" ? "en servidores municipales" : m.hosting === "ue" ? "procesado en la UE" : "procesado fuera de la UE"}), adecuado para una tarea de complejidad ${["", "básica", "intermedia", "avanzada"][ai.complexity]}.`,
+    );
+  }
+  if (constraints.aiDisclosure) controls.push("La app indicará claramente que las respuestas o textos los genera una IA.");
+  if (constraints.aiHumanReview) controls.push("Los resultados de la IA se mostrarán como borrador que una persona debe revisar y confirmar.");
   if (constraints.syntheticDataOnly) controls.push("Modo prototipo: la app mostrará un aviso de \"solo datos ficticios\" y se generará con datos inventados.");
   if (constraints.accessibility) controls.push("Se exigirán criterios de accesibilidad (WCAG 2.1 AA).");
   if (answers.decisions === "apoyo" || answers.decisions === "automatica") controls.push("Los resultados se mostrarán como propuesta para revisión humana, nunca como decisión final.");
@@ -423,7 +496,7 @@ export function assess(answers: Answers): Assessment {
   if (answers.decisions === "apoyo" || answers.decisions === "automatica") obligations.push("Documenta cómo se revisa humanamente cada resultado (Reglamento de IA y art. 22 RGPD).");
   if (contractors) obligations.push("Las contratas que la usen deben tener contrato de encargo de tratamiento o acuerdo de confidencialidad que cubra este uso.");
   if (isPublic) obligations.push("La publicación en internet llegará en una fase posterior y requerirá aprobación de TI y Comunicación, con declaración de accesibilidad. Mientras tanto se publicará solo en la intranet.");
-  if (answers.aiUse !== "no") obligations.push("Indica en la app que usa IA y que sus respuestas pueden contener errores (transparencia, Reglamento de IA).");
+  if (ai) obligations.push(...ai.obligations);
   if (constraints.storage === "bd" && personalData) {
     obligations.push("Atiende las solicitudes de acceso o supresión de datos: desde «Mis apps» puedes exportar y borrar los registros.");
   }
@@ -434,7 +507,7 @@ export function assess(answers: Answers): Assessment {
   const ensCategory: Assessment["ensCategory"] =
     RANK[level] >= RANK.alto ? "alta" : level === "medio" ? "media" : "básica";
 
-  return { level, score, ensCategory, reasons, controls, obligations, constraints, personalData, undeclared };
+  return { level, score, ensCategory, reasons, controls, obligations, constraints, personalData, undeclared, ai };
 }
 
 /** Compromisos que la persona debe aceptar antes de construir. */
@@ -447,5 +520,6 @@ export function commitments(a: Assessment): string[] {
   if (a.personalData) list.push("Usaré solo los datos personales imprescindibles y los borraré cuando no sean necesarios.");
   if (a.constraints.syntheticDataOnly) list.push("Solo usaré datos ficticios hasta que TI y el DPD aprueben su uso con datos reales.");
   if (a.constraints.ai) list.push("Revisaré siempre las respuestas de la IA: pueden contener errores.");
+  if (a.ai) list.push("Conozco las capacidades y límites de la IA, o recibiré la formación necesaria (art. 4 del Reglamento de IA).");
   return list;
 }

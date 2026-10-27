@@ -5,6 +5,7 @@ import type { Express, Request, Response } from "express";
 import { APP_CSP, hardenHtml, scanCode } from "../shared/codeScan";
 import { assess, LEVEL_INFO, sanitizeAnswers, type Answers, type Assessment } from "../shared/policy";
 import { maskPii } from "../shared/pii";
+import type { ModelInfo } from "../shared/aiAct";
 import {
   addMonths, canAccess, canManage, canPreview, isExpired, parseMembers, publishDecision,
   REVIEW_PERIOD_MONTHS, type Identity, type Publication,
@@ -20,7 +21,9 @@ function dataScope(p: Publication, who: Identity): string {
 
 interface Deps {
   audit: (event: string, answers: Answers, a: Assessment, extra?: Record<string, unknown>) => void;
-  askAi: (answers: Answers, text: string) => Promise<string>;
+  askAi: (answers: Answers, text: string, a: Assessment) => Promise<string>;
+  models: () => ModelInfo[];
+  isAiRefusal: (e: unknown) => boolean;
   rateLimit: (max: number, windowMs: number) => (req: Request, res: Response, next: () => void) => void;
 }
 
@@ -130,7 +133,7 @@ export function registerPortal(app: Express, deps: Deps) {
   app.post("/api/publicaciones", requireStaff, deps.rateLimit(20, 10 * 60_000), (req, res) => {
     const who = req.identity!;
     const answers = sanitizeAnswers(req.body?.respuestas);
-    const a = assess(answers);
+    const a = assess(answers, deps.models());
     const decision = publishDecision(answers, a);
     if (!decision.allowed) return res.status(403).json({ error: decision.reasons[0] });
     if (req.body?.compromisosAceptados !== true) return res.status(400).json({ error: "Debes aceptar los compromisos de uso." });
@@ -319,7 +322,7 @@ export function registerPortal(app: Express, deps: Deps) {
         const q = maskPii(String(args[0] || "").slice(0, 8000));
         if (!q.text.trim()) return res.status(400).json({ error: "Pregunta vacía." });
         deps.audit("ia_app_publicada", p.answers, p.assessment, { id: p.id, enmascarados: q.replaced });
-        return res.json({ resultado: await deps.askAi(p.answers, q.text) });
+        return res.json({ resultado: await deps.askAi(p.answers, q.text, p.assessment) });
       }
       if (servicio === "bd") {
         if (p.assessment.constraints.storage !== "bd") return res.status(403).json({ error: "Esta aplicación no usa la base de datos." });
@@ -332,7 +335,7 @@ export function registerPortal(app: Express, deps: Deps) {
       }
       res.status(400).json({ error: "Servicio desconocido." });
     } catch (error) {
-      if (error instanceof db.DbError) return res.status(400).json({ error: error.message });
+      if (error instanceof db.DbError || deps.isAiRefusal(error)) return res.status(400).json({ error: (error as Error).message });
       console.error("Error en servicios de app publicada:", error);
       res.status(500).json({ error: "El servicio no está disponible." });
     }

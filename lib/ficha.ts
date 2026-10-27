@@ -4,6 +4,7 @@ import {
 } from "@/shared/policy";
 import type { ScanFinding } from "@/shared/codeScan";
 import { maskPii } from "@/shared/pii";
+import { AI_ACT_LABEL, AI_DOMAINS, AI_TASKS, CAPABILITY_LABEL } from "@/shared/aiAct";
 
 export interface FichaInput {
   answers: Answers;
@@ -46,7 +47,20 @@ ${e.undeclared.length ? `\n**Detectados en los ejemplos sin declarar:** ${e.unde
 - **Decisiones:** ${label(DECISIONS, a.decisions)}
 - **Integraciones:** ${label(INTEGRATIONS, a.integrations)}
 
-## 5. Evaluación de riesgo
+${
+    e.ai
+      ? `## Inteligencia artificial
+- **Tipo:** ${a.appKind === "automatizacion" ? "Automatización de un flujo de trabajo" : "Aplicación"}
+- **Tareas de la IA:** ${a.ai.tasks.map((t) => label(AI_TASKS, t)).join(", ") || "—"}
+- **Ámbitos del Anexo III:** ${a.ai.domains.map((d) => label(AI_DOMAINS, d)).join("; ") || "Ninguno"}
+- **Clasificación (Reglamento de IA):** ${AI_ACT_LABEL[e.ai.category]}
+- **Complejidad:** ${CAPABILITY_LABEL[e.ai.complexity]}
+- **Modelo asignado:** ${e.ai.recommended ? `${e.ai.recommended.name} (${e.ai.recommended.hosting})` : "ninguno adecuado"}
+- **Supervisión humana:** ${a.ai.oversight} · **Transparencia exigida:** ${e.constraints.aiDisclosure ? "sí" : "no"}
+${e.ai.warnings.length ? `\n**Avisos:**\n${list(e.ai.warnings)}\n` : ""}
+`
+      : ""
+  }## 5. Evaluación de riesgo
 - **Nivel:** ${LEVEL_INFO[e.level].label} (puntuación orientativa ${e.score}/100)
 - **Categoría ENS orientativa:** ${e.ensCategory}
 

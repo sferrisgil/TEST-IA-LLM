@@ -2,6 +2,7 @@ import { Ban, CheckCircle2, ClipboardList, ShieldCheck, TriangleAlert } from "lu
 import { Section } from "@/components/fields";
 import { LEVEL_INFO, type Assessment } from "@/shared/policy";
 import { cn } from "@/lib/utils";
+import { AiResult } from "@/src/steps/AiStep";
 
 export const LEVEL_STYLE: Record<Assessment["level"], { box: string; icon: typeof Ban }> = {
   bajo: { box: "border-emerald-500 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-100", icon: CheckCircle2 },
@@ -44,6 +45,8 @@ export function AssessmentStep({
           Puntuación orientativa: {assessment.score}/100 · Categoría ENS orientativa: {assessment.ensCategory}
         </p>
       </div>
+
+      {assessment.ai && <AiResult ai={assessment.ai} compact />}
 
       {!blocked && (
         <div className="grid gap-4 lg:grid-cols-2">

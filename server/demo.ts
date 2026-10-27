@@ -139,7 +139,7 @@ ${c.syntheticDataOnly ? '<div class="banner" role="alert">PROTOTIPO – usar sol
     <ul id="lista"></ul>
     ${c.deleteButton ? '<button class="sec" id="borrar">Borrar todos los datos</button>' : ""}
   </section>
-  ${c.ai ? `<section class="card"><h2>Asistente</h2><button id="resumir">Resumir registros con IA</button><p id="ia" aria-live="polite"></p><p><small>Las respuestas de la IA pueden contener errores: revísalas siempre.</small></p></section>` : ""}
+  ${c.ai ? `<section class="card"><h2>Asistente</h2><button id="resumir">Resumir registros con IA</button><p><small>Borrador generado con inteligencia artificial: revísalo antes de usarlo, puede contener errores.</small></p><p id="ia" aria-live="polite"></p></section>` : ""}
   ${c.privacyNotice ? `<section class="card"><h2>Aviso de privacidad</h2><p>Finalidad: ${esc(answers.purpose || "la indicada por el servicio")}. Responsable: ${esc(answers.department || "el Ayuntamiento")}. ${c.storage === "bd" ? `Los datos se guardan en la base de datos municipal${c.retentionDays ? ` y se borran a los ${c.retentionDays} días sin cambios` : ""}` : `Los datos no salen de este navegador${store ? "" : " y se borran al cerrar la página"}`}.</p></section>` : ""}
 </main>
 <footer>${name} · Responsable: ${esc(answers.owner || "—")} · Creada con el Taller de Apps IA del Ayuntamiento</footer>

@@ -11,9 +11,10 @@ La idea central: **la IA construye, pero las reglas las pone el Ayuntamiento.** 
 | 1. Tu idea | Describe la app con tus palabras. La IA propone nombre, finalidad y preguntas para concretar la funcionalidad. Se identifica a la persona responsable. |
 | 2. Los datos | Marca qué tipo de información usará (con ejemplos en lenguaje llano). Puedes **pegar un ejemplo de los datos**: se analiza **solo en el navegador** (DNI/NIE con letra de control, IBAN, tarjetas, NSS, teléfonos, correos, direcciones, matrículas, credenciales y palabras que indican salud, menores, servicios sociales, datos penales…). Lo detectado cuenta en la evaluación aunque no se marque. |
 | 3. El uso | Quién la usará (solo yo, equipo, departamento, plantilla, contratas por VPN, ciudadanía), **dónde se guardan los datos** (nada, el navegador o la **base de datos municipal SQL**), si usa IA, si interviene en decisiones sobre personas, integraciones y conservación. |
-| 4. Evaluación | Semáforo de riesgo con los motivos, las medidas que aplica la herramienta, las obligaciones del responsable y los compromisos de uso que hay que aceptar. |
-| 5. Construir | Conversación con la IA para crear y ajustar la app, con vista previa aislada, revisión de seguridad automática, deshacer y descarga. |
-| 6. Ficha y publicación | Publicación en la intranet (directa si el riesgo es bajo; si no, tras revisión de TI/DPD) y ficha de la aplicación (Markdown/JSON) para el inventario y el Registro de Actividades de Tratamiento. |
+| 4. La IA | Solo si la app (o automatización) usa IA: tareas, ámbitos de alto riesgo, prácticas prohibidas, transparencia, supervisión humana y complejidad. Devuelve la **clasificación según el Reglamento de IA** y el **modelo asignado**. |
+| 5. Evaluación | Semáforo de riesgo con los motivos, las medidas que aplica la herramienta, las obligaciones del responsable y los compromisos de uso que hay que aceptar. |
+| 6. Construir | Conversación con la IA para crear y ajustar la app, con vista previa aislada, revisión de seguridad automática, deshacer y descarga. |
+| 7. Ficha y publicación | Publicación en la intranet (directa si el riesgo es bajo; si no, tras revisión de TI/DPD) y ficha de la aplicación (Markdown/JSON) para el inventario y el Registro de Actividades de Tratamiento. |
 
 Además de **Crear app**, la plataforma tiene:
 
@@ -22,6 +23,23 @@ Además de **Crear app**, la plataforma tiene:
 - **Revisión** (TI y DPD): aprobar o rechazar publicaciones, probar las apps e inventario completo.
 
 Detalles de arquitectura, control de acceso, ciclo de publicación, configuración del proxy/SSO y propuesta de **fase 2 (acceso público)**: [docs/despliegue.md](docs/despliegue.md).
+
+## Uso de IA: Reglamento de IA, complejidad y modelo
+
+Cuando la app o automatización usa IA mientras funciona, se evalúa ([`shared/aiAct.ts`](shared/aiAct.ts)):
+
+1. **Cumplimiento del Reglamento (UE) 2024/1689**:
+   - *Práctica prohibida* (art. 5: manipulación, reconocimiento de emociones en el trabajo o la educación, categorización biométrica, predicción de delitos por perfil, puntuación social) → **no permitido**.
+   - *Alto riesgo* (ámbitos del Anexo III —ayudas y servicios esenciales, personal, educación, policía local, extranjería, sancionadores, emergencias, infraestructuras, biometría— cuando influye en decisiones) → **riesgo alto**: solo prototipo; exige evaluación de impacto en derechos fundamentales (art. 27), supervisión humana, registros, inscripción en la base de datos de la UE (art. 49), etc.
+   - *Posible alto riesgo* (ámbito del Anexo III sin influir en decisiones) → **riesgo medio** y documentar la excepción del art. 6.3.
+   - *Transparencia* (chat con personas o textos publicados) → la app debe avisar de que es IA (art. 50).
+   - Siempre: alfabetización en IA (art. 4).
+2. **Complejidad de la tarea** (básica, intermedia, avanzada) según las tareas, el razonamiento necesario y el impacto de un error, junto con el tamaño de los textos y los idiomas.
+3. **Elección del modelo**: de entre los modelos del catálogo municipal, el **más económico que cumple** la capacidad, el contexto, los idiomas y, si se envían datos personales, que esté autorizado para ello (contrato de encargo, proceso en la UE o servidor local). Si ninguno sirve, la app no se puede construir y se explica el motivo modelo a modelo.
+
+La app generada queda ligada a ese modelo: el servidor solo llama al modelo asignado, limita el tamaño de cada consulta, y la app debe mostrar el aviso de IA y presentar los resultados como **borrador para revisión humana** cuando corresponde. También se avisa de límites prácticos (cálculos, documentos propios, automatizaciones sin supervisión, volumen).
+
+El catálogo lo mantiene TI en un fichero JSON (`MODELS_FILE`, ejemplo en [`config/modelos.ejemplo.json`](config/modelos.ejemplo.json)). Admite modelos de Gemini y cualquier servidor compatible con la API de OpenAI (vLLM, Ollama…), por ejemplo un **modelo local** para tratar datos personales sin que salgan del Ayuntamiento.
 
 ## Dónde guardan los datos las apps
 
@@ -88,6 +106,8 @@ En desarrollo no hay SSO: en la cabecera se puede cambiar de **perfil de prueba*
 | `DPD_EMAIL` | Correo del Delegado de Protección de Datos (botón "Escribir al DPD") |
 | `PORT` | Puerto (por defecto 3000) |
 | `DATA_DIR` | Carpeta de las apps publicadas y de la base de datos `datos.sqlite` (por defecto `data/`) |
+| `MODELS_FILE` | Catálogo de modelos de IA (ver `config/modelos.ejemplo.json`). Sin él se usa un catálogo de ejemplo |
+| `LOCAL_MODEL_URL`, `LOCAL_MODEL` | Con el catálogo de ejemplo: URL y nombre de un modelo local compatible con OpenAI (activa el «modelo local») |
 | `DB_MAX_RECORDS_PER_APP` | Máximo de registros por app (por defecto 50.000) |
 | `AUTH_MODE` | `proxy` (por defecto en producción) o `desarrollo` |
 | `AUTH_HEADER_USER`, `AUTH_HEADER_NAME`, `AUTH_HEADER_GROUPS`, `AUTH_HEADER_DEPARTMENT` | Cabeceras del SSO (por defecto `x-remote-user`, `x-remote-name`, `x-remote-groups`, `x-remote-department`) |
@@ -104,6 +124,8 @@ shared/policy.ts    Cuestionario, reglas de riesgo, restricciones y compromisos
 shared/pii.ts       Detector y enmascarado de datos personales (sin red)
 shared/codeScan.ts  Revisión del código generado, CSP, puentes de IA y de datos
 shared/publishing.ts Reglas de publicación y control de acceso
+shared/aiAct.ts     Reglamento de IA, complejidad y selección de modelo
+server/models.ts    Catálogo de modelos y conexión (Gemini / compatible OpenAI)
 server.ts           API: evaluar, aclarar, construir, vista previa, IA para apps
 server/portal.ts    Publicación, revisión, catálogo y visor de apps publicadas
 server/identity.ts  Identidad (SSO por proxy / perfiles de prueba)
@@ -123,7 +145,7 @@ tests/              Pruebas automáticas
 Esta versión es una base funcional. Para desplegarla en el Ayuntamiento conviene:
 
 1. **Validar las reglas** de `shared/policy.ts` con TI y el DPD, y adaptar textos a las políticas internas.
-2. **Proveedor de IA**: firmar el contrato de encargo de tratamiento, garantizar tratamiento en la UE y que los datos no se usan para entrenar; o sustituir el cliente por un modelo alojado por el Ayuntamiento (el código está aislado en `server.ts`).
+2. **Catálogo de modelos**: definir en `MODELS_FILE` los modelos realmente disponibles, con su región de proceso y si hay contrato de encargo (`personalData`). Para datos personales, valorar un modelo local. Los criterios de complejidad y los ámbitos del Reglamento de IA deben validarlos TI y el DPD.
 3. Configurar el **proxy con SSO** y las redes (ver [docs/despliegue.md](docs/despliegue.md)) y crear los grupos de plantilla, contratas y revisores en el directorio.
 4. Avisar por correo a los revisores de las publicaciones pendientes y a los responsables de las revisiones anuales próximas (hoy se consultan en la plataforma).
 5. Si el volumen crece, migrar `server/db.ts` y `server/store.ts` a PostgreSQL o al gestor corporativo (las consultas están aisladas en esos ficheros) y cifrar el disco donde está `DATA_DIR`.

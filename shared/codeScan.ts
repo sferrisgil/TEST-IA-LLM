@@ -95,6 +95,12 @@ export function scanCode(html: string, constraints: GenerationConstraints): Scan
   if (constraints.privacyNotice && !/privacidad|protecci[oó]n de datos/i.test(code)) {
     out.push({ severity: "aviso", rule: "aviso-privacidad", message: "No se encuentra el aviso de privacidad." });
   }
+  if (constraints.ai && constraints.aiDisclosure && !/inteligencia artificial|generad[oa] (?:con|por) (?:la )?IA/i.test(code)) {
+    out.push({ severity: "aviso", rule: "aviso-ia", message: "No se encuentra el aviso de que los textos los genera una IA (art. 50 del Reglamento de IA)." });
+  }
+  if (constraints.ai && constraints.aiHumanReview && !/borrador|revis/i.test(code)) {
+    out.push({ severity: "aviso", rule: "revision-humana", message: "No se aprecia que los resultados de la IA se presenten como borrador para revisión humana." });
+  }
   if (constraints.syntheticDataOnly && !/ficticio|prototipo/i.test(code)) {
     out.push({ severity: "aviso", rule: "aviso-prototipo", message: "No se encuentra el aviso de \"solo datos ficticios\"." });
   }

@@ -3,7 +3,7 @@ import { Lightbulb, Loader2, ShieldAlert, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Field, Section } from "@/components/fields";
+import { Choice, Field, Section } from "@/components/fields";
 import { detectPii } from "@/shared/pii";
 import type { Answers } from "@/shared/policy";
 
@@ -53,6 +53,20 @@ export function IdeaStep({
 
   return (
     <div className="space-y-4">
+      <Section title="¿Qué quieres crear?">
+        <Choice
+          options={[
+            { id: "aplicacion", label: "Una aplicación", help: "Pantallas para consultar, registrar o calcular cosas" },
+            {
+              id: "automatizacion",
+              label: "Una automatización de un flujo de trabajo",
+              help: "Pasos encadenados que se hacen con poca intervención: recibir, clasificar, preparar respuestas…",
+            },
+          ]}
+          value={answers.appKind}
+          onChange={(appKind) => update({ appKind })}
+        />
+      </Section>
       <Section title="¿Qué aplicación necesitas?" description="Cuéntalo con tus palabras, como se lo explicarías a un compañero.">
         <Field label="Descripción de la idea" htmlFor="desc" hint="Qué problema resuelve, quién la usará y qué debería hacer.">
           <Textarea

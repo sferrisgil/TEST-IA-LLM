@@ -10,6 +10,8 @@ import { AssessmentStep, LEVEL_STYLE } from "@/src/steps/AssessmentStep";
 import { BuildStep, type Version } from "@/src/steps/BuildStep";
 import { FichaStep } from "@/src/steps/FichaStep";
 import { PublishPanel } from "@/src/steps/PublishPanel";
+import { AiStep } from "@/src/steps/AiStep";
+import { DEFAULT_MODELS, type ModelInfo } from "@/shared/aiAct";
 import { api, type Me } from "@/src/api";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +19,7 @@ const STEPS = [
   { title: "Tu idea", subtitle: "Describe lo que necesitas" },
   { title: "Los datos", subtitle: "Qué información usará" },
   { title: "El uso", subtitle: "Quién y cómo la usará" },
+  { title: "La IA", subtitle: "Reglamento de IA y modelo" },
   { title: "Evaluación", subtitle: "Riesgos y compromisos" },
   { title: "Construir", subtitle: "Crea y ajusta tu app" },
   { title: "Ficha", subtitle: "Registro y entrega" },
@@ -46,6 +49,12 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
   const [editing, setEditing] = useState(false);
   const [members, setMembers] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [models, setModels] = useState<ModelInfo[]>(DEFAULT_MODELS);
+
+  // Catálogo real de modelos del Ayuntamiento (el servidor evalúa con el mismo).
+  useEffect(() => {
+    api<ModelInfo[]>("/api/modelos").then(setModels).catch(() => {});
+  }, []);
 
   // El responsable es la persona identificada (SSO); el departamento se propone.
   useEffect(() => {
@@ -73,8 +82,8 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
             setFindings(pv.hallazgos);
           }
         }
-        setStepRaw(3);
-        setMaxStep(3);
+        setStepRaw(4);
+        setMaxStep(4);
         window.scrollTo({ top: 0 });
       } catch (e: any) {
         setLoadError(e.message);
@@ -97,7 +106,8 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
   }
 
   const update = (p: Partial<Answers>) => setAnswers((a) => ({ ...a, ...p }));
-  const assessment = useMemo(() => assess(answers), [answers]);
+  const assessment = useMemo(() => assess(answers, models), [answers, models]);
+  const usesAi = answers.aiUse !== "no";
   const commitments = useMemo(() => getCommitments(assessment), [assessment]);
   const allAccepted = commitments.length > 0 && commitments.every((_, i) => accepted[i]);
 
@@ -116,22 +126,25 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
   const canNext = (() => {
     if (step === 0) return answers.description.trim().length >= 15 && !!answers.appName.trim() && !!answers.owner.trim() && !!answers.department.trim();
     if (step === 1) return answers.data.length > 0 && (answers.origin.length > 0 || answers.data.includes("ninguno"));
-    if (step === 3) return assessment.level !== "no_permitido" && allAccepted;
-    if (step === 4) return versions.length > 0;
+    if (step === 3) return !usesAi || answers.ai.tasks.length > 0;
+    if (step === 4) return assessment.level !== "no_permitido" && allAccepted;
+    if (step === 5) return versions.length > 0;
     return step < STEPS.length - 1;
   })();
   const missingHint = [
     "Completa la descripción (al menos una frase), el nombre, la persona responsable y el departamento.",
     "Marca al menos un tipo de información y su origen.",
     "",
+    "Marca al menos una tarea de la IA.",
     assessment.level === "no_permitido" ? "Esta aplicación no se puede construir en autoservicio. Puedes revisar tus respuestas o ir directamente a la ficha." : "Acepta todos los compromisos para continuar.",
     "Espera a que se genere la primera versión.",
     "",
   ][step];
 
   function next() {
-    if (step === 3 && !acceptedAt) setAcceptedAt(new Date().toISOString());
-    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+    if (step === 4 && !acceptedAt) setAcceptedAt(new Date().toISOString());
+    // El paso de IA se salta si la app no usa IA.
+    setStep((s) => Math.min(s === 2 && !usesAi ? 4 : s + 1, STEPS.length - 1));
     window.scrollTo({ top: 0 });
   }
 
@@ -146,12 +159,12 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
         </p>
       )}
         <nav aria-label="Pasos" className="mb-6">
-          <ol className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          <ol className="grid grid-cols-4 gap-2 sm:grid-cols-7">
             {STEPS.map((s, i) => {
               // Tras la evaluación solo se puede avanzar con los compromisos aceptados.
               const blocked = assessment.level === "no_permitido";
               const reachable =
-                i <= maxStep && (i <= 3 || (i === 5 && blocked) || (!blocked && allAccepted && (i === 4 || versions.length > 0)));
+                i <= maxStep && (i <= 4 || (i === 6 && blocked) || (!blocked && allAccepted && (i === 5 || versions.length > 0)));
               return (
                 <li key={s.title}>
                   <button
@@ -189,7 +202,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
             <p className="text-sm text-muted-foreground">{STEPS[step].subtitle}</p>
           </div>
           <div className="flex items-center gap-2">
-            {step >= 1 && step !== 3 && (
+            {step >= 1 && step !== 4 && (
               <span className={cn("rounded-full border px-3 py-1 text-xs font-medium", style.box)}>{LEVEL_INFO[assessment.level].label}</span>
             )}
             {maxStep > 0 && (
@@ -204,8 +217,9 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
           {step === 0 && <IdeaStep answers={answers} update={update} clarifications={clarifications} setClarifications={setClarifications} />}
           {step === 1 && <DataStep answers={answers} update={update} />}
           {step === 2 && <UsageStep answers={answers} update={update} />}
-          {step === 3 && <AssessmentStep assessment={assessment} commitments={commitments} accepted={accepted} setAccepted={setAccepted} />}
-          {step === 4 && (
+          {step === 3 && <AiStep answers={answers} update={update} result={assessment.ai} />}
+          {step === 4 && <AssessmentStep assessment={assessment} commitments={commitments} accepted={accepted} setAccepted={setAccepted} />}
+          {step === 5 && (
             <BuildStep
               answers={answers}
               assessment={assessment}
@@ -215,7 +229,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
               setFindings={setFindings}
             />
           )}
-          {step === 5 && (
+          {step === 6 && (
             <div className="space-y-4">
               {versions.length > 0 && assessment.level !== "no_permitido" && (
                 <PublishPanel
@@ -238,12 +252,12 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
         </main>
 
         <div className="mt-6 flex flex-wrap items-center gap-3 border-t pt-4">
-          <Button variant="outline" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>
+          <Button variant="outline" disabled={step === 0} onClick={() => setStep((s) => (s === 4 && !usesAi ? 2 : s - 1))}>
             <ArrowLeft /> Atrás
           </Button>
           <p className="flex-1 text-right text-xs text-muted-foreground">{!canNext && missingHint}</p>
-          {step === 3 && assessment.level === "no_permitido" ? (
-            <Button variant="outline" onClick={() => setStep(5)}>
+          {step === 4 && assessment.level === "no_permitido" ? (
+            <Button variant="outline" onClick={() => setStep(6)}>
               Ir a la ficha <ArrowRight />
             </Button>
           ) : (

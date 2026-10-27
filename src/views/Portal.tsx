@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { AUDIENCES, DATA_CATEGORIES, LEVEL_INFO } from "@/shared/policy";
+import { AI_ACT_LABEL, CAPABILITY_LABEL } from "@/shared/aiAct";
 import { api, fmtDate, STATUS_LABEL, type Me, type PublicationSummary } from "@/src/api";
 import { LEVEL_STYLE } from "@/src/steps/AssessmentStep";
 import { cn } from "@/lib/utils";
@@ -246,6 +247,12 @@ export function Review({ me }: { me: Me }) {
                     <p>
                       <strong>Datos:</strong> {[...new Set([...r.data, ...r.detectedCategories])].map(label).join(", ") || "—"}
                     </p>
+                    {e.ai && (
+                      <p>
+                        <strong>IA:</strong> {AI_ACT_LABEL[e.ai.category]} · complejidad {CAPABILITY_LABEL[e.ai.complexity]} · modelo{" "}
+                        {e.ai.recommended?.name ?? "ninguno"} · supervisión: {r.ai.oversight}
+                      </p>
+                    )}
                     <ul className="list-disc pl-5">
                       {e.reasons.map((x, i) => (
                         <li key={i}>{x}</li>
