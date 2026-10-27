@@ -8,11 +8,15 @@ import type { ScanFinding } from "@/shared/codeScan";
 import type { Answers, Assessment } from "@/shared/policy";
 import { download, slug } from "@/lib/ficha";
 import { cn } from "@/lib/utils";
+import type { Workflow } from "@/shared/workflow";
+import { WorkflowPanel } from "@/src/steps/WorkflowPanel";
 
 export interface Version {
   code: string;
   preview: string;
   constraintsKey: string;
+  /** Flujo programado (solo automatizaciones). */
+  workflow?: Workflow | null;
 }
 
 interface Message {
@@ -40,6 +44,8 @@ export function BuildStep({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [flowError, setFlowError] = useState("");
+  const updateWorkflow = (w: Workflow) => setVersions(versions.map((v, i) => (i === versions.length - 1 ? { ...v, workflow: w } : v)));
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const current = versions[versions.length - 1];
   const constraintsKey = JSON.stringify(assessment.constraints);
@@ -58,6 +64,7 @@ export function BuildStep({
           detalles: details,
           instruccion: instruction,
           codigoActual: fresh ? "" : current?.code || "",
+          flujoActual: fresh ? undefined : current?.workflow || undefined,
         }),
       });
       const data = await r.json();
@@ -71,7 +78,11 @@ export function BuildStep({
         { role: "asistente", text: data.resumen, findings: data.hallazgos, suggestions: data.sugerencias },
         ...notes.map((text) => ({ role: "sistema" as const, text })),
       ]);
-      if (data.codigo) setVersions([...versions, { code: data.codigo, preview: data.vistaPrevia, constraintsKey }]);
+      setFlowError(data.flujoError || "");
+      if (data.codigo) {
+        // Si la IA no propone un flujo válido, se conserva el anterior.
+        setVersions([...versions, { code: data.codigo, preview: data.vistaPrevia, constraintsKey, workflow: data.flujo || (fresh ? null : current?.workflow) || null }]);
+      }
     } catch (e: any) {
       setMessages((m) => [...m, { role: "sistema", text: e.message || "Error inesperado" }]);
     } finally {
@@ -199,6 +210,9 @@ export function BuildStep({
       </div>
 
       <div className="flex flex-col gap-3">
+        {answers.appKind === "automatizacion" && current && (
+          <WorkflowPanel answers={answers} assessment={assessment} workflow={current.workflow ?? null} error={flowError} onChange={updateWorkflow} />
+        )}
         {stale && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
             <TriangleAlert className="size-4" />

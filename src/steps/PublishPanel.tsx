@@ -5,12 +5,14 @@ import { Input } from "@/components/ui/input";
 import { Field, Section } from "@/components/fields";
 import { publishDecision } from "@/shared/publishing";
 import type { Answers, Assessment } from "@/shared/policy";
+import type { Workflow } from "@/shared/workflow";
 import { api, STATUS_LABEL, type PublicationSummary } from "@/src/api";
 
 export function PublishPanel({
   answers,
   assessment,
   code,
+  workflow,
   stale,
   publishedId,
   setPublishedId,
@@ -20,6 +22,7 @@ export function PublishPanel({
   answers: Answers;
   assessment: Assessment;
   code: string | null;
+  workflow: Workflow | null;
   stale: boolean;
   publishedId: string | null;
   setPublishedId: (id: string) => void;
@@ -40,6 +43,7 @@ export function PublishPanel({
         id: publishedId || undefined,
         respuestas: answers,
         codigo: code,
+        flujo: workflow || undefined,
         miembros: members,
         compromisosAceptados: true,
       });

@@ -1,18 +1,18 @@
 /**
- * Almacén de publicaciones en disco (JSON + un HTML por versión).
- * Suficiente para un servidor interno; puede sustituirse por una base de datos
- * manteniendo esta misma interfaz.
+ * Almacén de publicaciones: los datos en la base de datos (tabla
+ * "publicaciones", compartida entre procesos) y un HTML por versión en disco.
  */
 import fs from "fs";
 import path from "path";
 import { randomBytes } from "crypto";
 import type { Publication } from "../shared/publishing";
+import { documents } from "./db";
 
 const DATA_DIR = path.resolve(process.env.DATA_DIR || "data");
 const INDEX = path.join(DATA_DIR, "publicaciones.json");
 const APPS_DIR = path.join(DATA_DIR, "apps");
 
-let cache: Publication[] | null = null;
+const table = documents<Publication>("publicaciones", INDEX);
 
 function ensureDirs() {
   fs.mkdirSync(APPS_DIR, { recursive: true, mode: 0o750 });
@@ -24,17 +24,6 @@ function writeAtomic(file: string, content: string) {
   fs.renameSync(tmp, file);
 }
 
-function load(): Publication[] {
-  if (cache) return cache;
-  ensureDirs();
-  cache = fs.existsSync(INDEX) ? (JSON.parse(fs.readFileSync(INDEX, "utf8")) as Publication[]) : [];
-  return cache;
-}
-
-function persist() {
-  writeAtomic(INDEX, JSON.stringify(cache, null, 2));
-}
-
 function htmlFile(id: string, version: number) {
   if (!/^[a-z0-9-]+$/.test(id)) throw new Error("Identificador no válido");
   return path.join(APPS_DIR, `${id}-v${version}.html`);
@@ -42,21 +31,17 @@ function htmlFile(id: string, version: number) {
 
 export const store = {
   all(): Publication[] {
-    return load();
+    return table.all();
   },
   get(id: string): Publication | undefined {
-    return load().find((p) => p.id === id);
+    return table.get(id);
   },
   save(p: Publication, html?: string) {
-    const list = load();
     if (html !== undefined) {
       ensureDirs();
       writeAtomic(htmlFile(p.id, p.version), html);
     }
-    const i = list.findIndex((x) => x.id === p.id);
-    if (i >= 0) list[i] = p;
-    else list.push(p);
-    persist();
+    table.save(p);
   },
   html(p: Publication): string | null {
     const f = htmlFile(p.id, p.version);

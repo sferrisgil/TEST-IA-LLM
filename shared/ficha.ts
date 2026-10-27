@@ -7,6 +7,7 @@ import type { ScanFinding } from "./codeScan";
 import { maskPii } from "./pii";
 import { AI_ACT_LABEL, AI_DOMAINS, AI_TASKS, CAPABILITY_LABEL } from "./aiAct";
 import { RECIPIENT_LABEL, SCALE_OPTIONS } from "./derivation";
+import { describeSchedule, describeSteps, type Workflow } from "./workflow";
 
 export interface FichaInput {
   answers: Answers;
@@ -15,6 +16,7 @@ export interface FichaInput {
   acceptedAt: string | null;
   versions: number;
   findings: ScanFinding[];
+  workflow?: Workflow | null;
 }
 
 const label = <T extends { id: string; label: string }>(list: T[], id: string) => list.find((x) => x.id === id)?.label ?? id;
@@ -65,6 +67,15 @@ ${
 - **Modelo asignado:** ${e.ai.recommended ? `${e.ai.recommended.name} (${e.ai.recommended.hosting})` : "ninguno adecuado"}
 - **Supervisión humana:** ${a.ai.oversight} · **Transparencia exigida:** ${e.constraints.aiDisclosure ? "sí" : "no"}
 ${e.ai.warnings.length ? `\n**Avisos:**\n${list(e.ai.warnings)}\n` : ""}
+`
+      : ""
+  }${
+    f.workflow
+      ? `## Automatización programada
+- **Programación:** ${describeSchedule(f.workflow.programacion)}
+
+${describeSteps(f.workflow.pasos).join("\n")}
+
 `
       : ""
   }## 5. Evaluación de riesgo

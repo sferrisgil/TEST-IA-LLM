@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/components/fields";
 import { RECIPIENT_LABEL } from "@/shared/derivation";
 import type { Answers, Assessment } from "@/shared/policy";
+import type { Workflow } from "@/shared/workflow";
 import { api, REQUEST_STATUS_LABEL, type DerivationView } from "@/src/api";
 
 /**
@@ -16,6 +17,7 @@ export function DerivationPanel({
   answers,
   assessment,
   code,
+  workflow,
   acceptedAt,
   request,
   setRequest,
@@ -23,6 +25,7 @@ export function DerivationPanel({
   answers: Answers;
   assessment: Assessment;
   code: string | null;
+  workflow: Workflow | null;
   acceptedAt: string | null;
   request: DerivationView | null;
   setRequest: (r: DerivationView) => void;
@@ -46,6 +49,7 @@ export function DerivationPanel({
         mensaje: message,
         contacto: contact,
         codigo: code || undefined,
+        flujo: workflow || undefined,
         aceptadoEn: acceptedAt,
       });
       setRequest(r);

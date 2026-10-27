@@ -7,6 +7,7 @@
  */
 
 import type { Answers, Assessment, Audience } from "./policy";
+import type { Workflow } from "./workflow";
 
 export type PublicationStatus = "pendiente" | "publicada" | "rechazada" | "retirada";
 export type ExternalAccess = "no_aplica" | "solicitado" | "aprobado";
@@ -50,6 +51,13 @@ export interface Publication {
   reviewBy: string;
   approvedBy?: string;
   history: HistoryEntry[];
+  /** Correo de la persona responsable (para avisos de las automatizaciones). */
+  ownerEmail?: string;
+  /** Automatización programada (solo apps de tipo automatización). */
+  workflow?: Workflow;
+  /** La programación está activa (se puede pausar). */
+  scheduleActive?: boolean;
+  nextRunAt?: string | null;
 }
 
 export const REVIEW_PERIOD_MONTHS = 12;

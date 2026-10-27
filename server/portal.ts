@@ -12,6 +12,8 @@ import {
 } from "../shared/publishing";
 import { requireIdentity, requireReviewer, requireStaff } from "./identity";
 import { store } from "./store";
+import { scheduleNext, validateWorkflow } from "./automations";
+import { describeSchedule, WorkflowError, type Workflow } from "../shared/workflow";
 import * as db from "./db";
 
 /** Ámbito de datos: reales si está publicada; de pruebas si no (revisión). */
@@ -46,6 +48,9 @@ function summary(p: Publication, who: Identity) {
     accesoExterno: p.externalAccess,
     url: `/apps/${p.id}`,
     almacenamiento: p.assessment.constraints.storage,
+    automatizacion: p.workflow
+      ? { programacion: describeSchedule(p.workflow.programacion), activa: p.scheduleActive !== false, proxima: p.nextRunAt ?? null }
+      : null,
     ...(manage
       ? {
           miembros: p.members,
@@ -146,6 +151,15 @@ export function registerPortal(app: Express, deps: Deps) {
       return res.status(422).json({ error: "La revisión de seguridad ha encontrado problemas graves. Corrígelos antes de publicar.", hallazgos: findings });
     }
 
+    let workflow: Workflow | undefined;
+    if (req.body?.flujo) {
+      try {
+        workflow = validateWorkflow(req.body.flujo, answers, a);
+      } catch (e) {
+        return res.status(400).json({ error: e instanceof WorkflowError || e instanceof SyntaxError ? `Automatización: ${e.message}` : "Flujo no válido." });
+      }
+    }
+
     const members = parseMembers(req.body?.miembros);
     if (answers.audience === "equipo" && members.length === 0) {
       return res.status(400).json({ error: "Indica los usuarios de tu equipo que podrán usarla." });
@@ -181,21 +195,35 @@ export function registerPortal(app: Express, deps: Deps) {
       reviewBy: addMonths(new Date(), REVIEW_PERIOD_MONTHS).toISOString(),
       approvedBy: decision.needsReview ? undefined : "automática",
       history: [...(p?.history || []), entry],
+      ownerEmail: who.email,
+      workflow,
+      scheduleActive: workflow ? true : undefined,
+      nextRunAt: null,
     };
+    if (status === "publicada") scheduleNext(p);
     store.save(p, hardenHtml(code, a.constraints));
     deps.audit(status === "publicada" ? "app_publicada" : "app_enviada_revision", answers, a, { id: p.id, version: p.version });
     res.json({ publicacion: summary(p, who), revision: decision });
   });
 
   // --- Consultas ------------------------------------------------------------
+  /** Catálogo con búsqueda y paginación en el servidor (miles de apps). */
   app.get("/api/publicaciones/catalogo", requireIdentity, (req, res) => {
     const who = req.identity!;
-    res.json(
-      store
-        .all()
-        .filter((p) => p.status === "publicada" && !isExpired(p) && canAccess(p, who))
-        .map((p) => summary(p, who)),
-    );
+    const norm = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const words = norm(String(req.query.buscar || "").slice(0, 100)).split(/\s+/).filter(Boolean);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limite) || 30));
+    const offset = Math.max(0, Number(req.query.desde) || 0);
+    const visible = store
+      .all()
+      .filter((p) => p.status === "publicada" && !isExpired(p) && canAccess(p, who))
+      .filter((p) => {
+        if (!words.length) return true;
+        const text = norm(`${p.name} ${p.answers.purpose} ${p.department}`);
+        return words.every((w) => text.includes(w));
+      })
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    res.json({ total: visible.length, aplicaciones: visible.slice(offset, offset + limit).map((p) => summary(p, who)) });
   });
 
   app.get("/api/publicaciones/mias", requireStaff, (req, res) => {
@@ -212,7 +240,7 @@ export function registerPortal(app: Express, deps: Deps) {
   app.get("/api/publicaciones/:id/editar", requireStaff, (req, res) => {
     const p = store.get(req.params.id);
     if (!p || p.owner !== req.identity!.user) return res.status(404).json({ error: "No encontrada." });
-    res.json({ id: p.id, respuestas: p.answers, codigo: store.html(p), miembros: p.members });
+    res.json({ id: p.id, respuestas: p.answers, codigo: store.html(p), miembros: p.members, flujo: p.workflow ?? null });
   });
 
   // --- Revisión (TI / DPD) --------------------------------------------------

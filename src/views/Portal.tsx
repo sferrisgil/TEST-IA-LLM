@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ExternalLink, Loader2, Pencil, RefreshCw, Search } from "lucide-react";
+import { CalendarClock, ExternalLink, Loader2, Pause, Pencil, Play, RefreshCw, Search } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -64,10 +64,31 @@ const Empty = ({ children }: { children: ReactNode }) => (
 // --- Catálogo -----------------------------------------------------------------
 
 export function Catalog({ me }: { me: Me }) {
-  const { items, error } = useList("/api/publicaciones/catalogo");
   const [q, setQ] = useState("");
-  const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-  const shown = (items || []).filter((p) => norm(`${p.nombre} ${p.finalidad} ${p.departamento}`).includes(norm(q)));
+  const [items, setItems] = useState<PublicationSummary[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState("");
+  const PAGE = 30;
+
+  const load = useCallback(
+    (offset: number, search: string) =>
+      api<{ total: number; aplicaciones: PublicationSummary[] }>(
+        `/api/publicaciones/catalogo?limite=${PAGE}&desde=${offset}&buscar=${encodeURIComponent(search)}`,
+      )
+        .then((r) => {
+          setTotal(r.total);
+          setItems((prev) => (offset === 0 ? r.aplicaciones : [...(prev || []), ...r.aplicaciones]));
+          setError("");
+        })
+        .catch((e) => setError(e.message)),
+    [],
+  );
+
+  // Búsqueda en el servidor, con una pequeña espera mientras se escribe.
+  useEffect(() => {
+    const t = setTimeout(() => load(0, q), 250);
+    return () => clearTimeout(t);
+  }, [q, load]);
 
   return (
     <div className="space-y-4">
@@ -83,18 +104,112 @@ export function Catalog({ me }: { me: Me }) {
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!items ? (
         <Loader2 className="animate-spin" />
-      ) : shown.length === 0 ? (
+      ) : items.length === 0 ? (
         <Empty>No hay aplicaciones disponibles{q ? " con ese criterio" : " todavía"}.</Empty>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map((p) => (
-            <Card key={p.id} p={p}>
-              <a className={cn(buttonVariants(), "mt-auto self-start")} href={p.url} target="_blank" rel="noreferrer">
-                Abrir <ExternalLink />
-              </a>
-            </Card>
-          ))}
+        <>
+          <p className="text-xs text-muted-foreground">{total} aplicación(es)</p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {items.map((p) => (
+              <Card key={p.id} p={p}>
+                <a className={cn(buttonVariants(), "mt-auto self-start")} href={p.url} target="_blank" rel="noreferrer">
+                  Abrir <ExternalLink />
+                </a>
+              </Card>
+            ))}
+          </div>
+          {items.length < total && (
+            <Button variant="outline" onClick={() => load(items.length, q)}>
+              Ver más
+            </Button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- Automatizaciones -------------------------------------------------------------
+
+interface RunsInfo {
+  programacion: string;
+  activa: boolean;
+  proxima: string | null;
+  enCurso: boolean;
+  ejecuciones: {
+    id: string;
+    origen: string;
+    inicio: string;
+    fin: string | null;
+    estado: "en_curso" | "ok" | "error";
+    resumen: { creados?: number; actualizados?: number; borrados?: number; ia?: number; error?: string } | null;
+    log: { nivel: string; msg: string }[];
+  }[];
+}
+
+const fmtDateTime = (s: string) => new Date(s).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function AutomationControls({ p, published }: { p: PublicationSummary; published: boolean }) {
+  const [info, setInfo] = useState<RunsInfo | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const load = () => api<RunsInfo>(`/api/publicaciones/${p.id}/ejecuciones`).then(setInfo).catch(() => {});
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.id]);
+
+  async function runNow() {
+    setBusy(true);
+    try {
+      await api(`/api/publicaciones/${p.id}/ejecutar`, {});
+      setOpen(true);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+      load();
+    }
+  }
+  async function toggle() {
+    await api(`/api/publicaciones/${p.id}/programacion`, { activa: !info?.activa }).catch((e) => alert(e.message));
+    load();
+  }
+
+  if (!info) return null;
+  const last = info.ejecuciones[0];
+  return (
+    <div className="space-y-2 rounded-md border p-2 text-xs">
+      <p className="flex flex-wrap items-center gap-2">
+        <CalendarClock className="size-4" />
+        <span className="flex-1">
+          <strong>Automatización:</strong> {info.programacion}
+          {info.activa ? (info.proxima ? ` · próxima: ${fmtDateTime(info.proxima)}` : "") : " · en pausa"}
+          {last && ` · última: ${fmtDateTime(last.inicio)} ${last.estado === "ok" ? "✓" : last.estado === "error" ? "✗" : "…"}`}
+        </span>
+      </p>
+      {published && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="xs" variant="outline" disabled={busy || info.enCurso} onClick={runNow}>
+            {busy ? <Loader2 className="animate-spin" /> : <Play />} Ejecutar ahora
+          </Button>
+          <Button size="xs" variant="outline" onClick={toggle}>
+            {info.activa ? <Pause /> : <Play />} {info.activa ? "Pausar" : "Reanudar"}
+          </Button>
+          <Button size="xs" variant="ghost" onClick={() => setOpen(!open)}>
+            Historial ({info.ejecuciones.length})
+          </Button>
         </div>
+      )}
+      {open && (
+        <ul className="max-h-60 space-y-1 overflow-auto">
+          {info.ejecuciones.map((e) => (
+            <li key={e.id} className={cn("rounded bg-muted p-1.5", e.estado === "error" && "text-destructive")}>
+              {fmtDateTime(e.inicio)} · {e.origen} · {e.estado === "ok" ? "correcta" : e.estado === "error" ? `error: ${e.resumen?.error ?? ""}` : "en curso"}
+              {e.resumen && e.estado === "ok" && ` · ${e.resumen.creados ?? 0} creados, ${e.resumen.actualizados ?? 0} actualizados, ${e.resumen.ia ?? 0} IA`}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -142,6 +257,7 @@ export function MyApps({ onEdit }: { onEdit: (id: string) => void }) {
               <p className="text-xs text-muted-foreground">Acceso desde internet solicitado: se estudiará en la fase de publicación externa.</p>
             )}
             <p className="text-xs text-muted-foreground">Revisión anual: antes del {fmtDate(p.revisarAntesDe)}</p>
+            {p.automatizacion && <AutomationControls p={p} published={p.estado === "publicada"} />}
             {p.almacenamiento === "bd" && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs">
                 <span className="flex-1">

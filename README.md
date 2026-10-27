@@ -41,6 +41,21 @@ La app generada queda ligada a ese modelo: el servidor solo llama al modelo asig
 
 El catálogo lo mantiene TI en un fichero JSON (`MODELS_FILE`, ejemplo en [`config/modelos.ejemplo.json`](config/modelos.ejemplo.json)). Admite modelos de Gemini y cualquier servidor compatible con la API de OpenAI (vLLM, Ollama…), por ejemplo un **modelo local** para tratar datos personales sin que salgan del Ayuntamiento.
 
+## Automatizaciones programadas
+
+Además de aplicaciones, se pueden crear **automatizaciones de flujos de trabajo** que se ejecutan solas ([`shared/workflow.ts`](shared/workflow.ts), [`server/automations.ts`](server/automations.ts)):
+
+- La IA genera, junto con la app (que sirve de panel), un **flujo declarativo** con pasos de un catálogo cerrado: *listar*, *para cada*, *si*, *IA*, *crear*, *actualizar*, *borrar* y *notificar*. En el servidor **no se ejecuta código generado**: el flujo lo interpreta el motor con límites estrictos (5.000 operaciones, 200 consultas a la IA, 500 elementos por bucle y 5 minutos por ejecución).
+- **Programación:** cada N minutos (mínimo 15), diaria, semanal, mensual o manual. Se edita en la propia pantalla.
+- **Probar ahora:** ejecuta el flujo en la base de datos de pruebas y muestra el registro de lo que ha hecho.
+- Una vez publicada, se ejecuta sola a su hora. Desde «Mis apps» se puede ver el historial, **ejecutar ahora** y **pausar o reanudar**. Los avisos del flujo y los errores llegan por correo a la persona responsable.
+- Si la evaluación exige revisión humana, lo que el flujo escribe con ayuda de la IA queda marcado como `_revision: "pendiente"`.
+- Necesitan la base de datos municipal y siguen las mismas reglas de evaluación, publicación y derivación que las apps.
+
+## Escalabilidad
+
+Hardware recomendado para 1, 10, 50 y 7.000 personas, basado en mediciones reales de rendimiento: [docs/dimensionamiento.md](docs/dimensionamiento.md). Resumen: con 4 núcleos la plataforma atiende miles de peticiones por segundo, mientras que el pico previsto para 7.000 personas es de ~50 pet/s. A gran escala lo que más pesa es la alta disponibilidad, las copias y la capacidad de IA.
+
 ## Derivación a TI y al DPD
 
 Algunas propuestas superan lo que se puede resolver en autoservicio ([`shared/derivation.ts`](shared/derivation.ts)). En ese caso la plataforma **deriva** la propuesta:
@@ -132,6 +147,9 @@ En desarrollo no hay SSO: en la cabecera se puede cambiar de **perfil de prueba*
 | `AUTH_HEADER_EMAIL` | Cabecera del SSO con el correo de la persona (para avisarla de las respuestas; por defecto `x-remote-email`) |
 | `MODELS_FILE` | Catálogo de modelos de IA (ver `config/modelos.ejemplo.json`). Sin él se usa un catálogo de ejemplo |
 | `LOCAL_MODEL_URL`, `LOCAL_MODEL` | Con el catálogo de ejemplo: URL y nombre de un modelo local compatible con OpenAI (activa el «modelo local») |
+| `WORKERS` | Procesos del servidor (uno por núcleo; por defecto 1). Solo en producción |
+| `SCHEDULER_ENABLED`, `SCHEDULER_CONCURRENCY` | Activar el programador de automatizaciones en esta instancia (por defecto sí) y cuántas ejecuta a la vez (por defecto 2) |
+| `RATE_LIMIT_FACTOR` | Multiplica todos los límites de peticiones por usuario (por defecto 1) |
 | `DB_MAX_RECORDS_PER_APP` | Máximo de registros por app (por defecto 50.000) |
 | `AUTH_MODE` | `proxy` (por defecto en producción) o `desarrollo` |
 | `AUTH_HEADER_USER`, `AUTH_HEADER_NAME`, `AUTH_HEADER_GROUPS`, `AUTH_HEADER_DEPARTMENT` | Cabeceras del SSO (por defecto `x-remote-user`, `x-remote-name`, `x-remote-groups`, `x-remote-department`) |
@@ -152,6 +170,10 @@ shared/aiAct.ts     Reglamento de IA, complejidad y selección de modelo
 shared/derivation.ts Cuándo y a quién se deriva una propuesta (TI / DPD)
 shared/ficha.ts     Ficha de la propuesta (navegador y servidor)
 server/derivations.ts Solicitudes derivadas: envío, conversación y resolución
+shared/workflow.ts  Definición de flujos programados, validación y calendario
+server/workflowRunner.ts Intérprete de flujos (sin código arbitrario)
+server/automations.ts Programador, pruebas e historial de ejecuciones
+scripts/carga/      Pruebas de carga reproducibles
 server/notify.ts    Avisos por correo y webhook
 server/models.ts    Catálogo de modelos y conexión (Gemini / compatible OpenAI)
 server.ts           API: evaluar, aclarar, construir, vista previa, IA para apps

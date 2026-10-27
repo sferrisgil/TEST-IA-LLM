@@ -22,6 +22,8 @@ const MAX_RECORD_BYTES = 64 * 1024;
 const MAX_RECORDS_PER_SCOPE = Number(process.env.DB_MAX_RECORDS_PER_APP) || 50_000;
 const MAX_LIST = 500;
 const TEST_TTL_DAYS = 1;
+/** Los textos de más de estos caracteres no se indexan para filtros (sí para la búsqueda). */
+const INDEXED_TEXT = 200;
 
 let db: Database.Database | null = null;
 
@@ -36,6 +38,9 @@ function open(): Database.Database {
     /* sistemas sin permisos POSIX */
   }
   db.pragma("journal_mode = WAL");
+  // Con varios procesos, esperar en lugar de fallar si otro está escribiendo.
+  db.pragma("busy_timeout = 5000");
+  db.pragma("synchronous = NORMAL");
   init(db);
   return db;
 }
@@ -56,7 +61,65 @@ function init(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_registros_lista ON registros (ambito, coleccion, actualizado);
     CREATE INDEX IF NOT EXISTS idx_registros_prop ON registros (ambito, coleccion, propietario);
+    -- Índice de texto completo (trigramas: búsqueda por fragmentos de palabra).
+    CREATE VIRTUAL TABLE IF NOT EXISTS registros_fts USING fts5(busqueda, content='registros', content_rowid='rowid', tokenize='trigram');
+    -- Índice de valores de campos (para filtros rápidos por campo = valor).
+    CREATE TABLE IF NOT EXISTS campos (
+      rid       INTEGER NOT NULL,
+      ambito    TEXT NOT NULL,
+      coleccion TEXT NOT NULL,
+      campo     TEXT NOT NULL,
+      valor
+    );
+    CREATE INDEX IF NOT EXISTS idx_campos_busqueda ON campos (ambito, coleccion, campo, valor);
+    CREATE INDEX IF NOT EXISTS idx_campos_rid ON campos (rid);
+
+    CREATE TRIGGER IF NOT EXISTS registros_ai AFTER INSERT ON registros BEGIN
+      INSERT INTO registros_fts (rowid, busqueda) VALUES (new.rowid, new.busqueda);
+      INSERT INTO campos SELECT new.rowid, new.ambito, new.coleccion, key, value FROM json_each(new.datos)
+        WHERE type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND length(value) <= ${INDEXED_TEXT});
+    END;
+    CREATE TRIGGER IF NOT EXISTS registros_ad AFTER DELETE ON registros BEGIN
+      INSERT INTO registros_fts (registros_fts, rowid, busqueda) VALUES ('delete', old.rowid, old.busqueda);
+      DELETE FROM campos WHERE rid = old.rowid;
+    END;
+    CREATE TRIGGER IF NOT EXISTS registros_au AFTER UPDATE OF datos, busqueda ON registros BEGIN
+      INSERT INTO registros_fts (registros_fts, rowid, busqueda) VALUES ('delete', old.rowid, old.busqueda);
+      INSERT INTO registros_fts (rowid, busqueda) VALUES (new.rowid, new.busqueda);
+      DELETE FROM campos WHERE rid = old.rowid;
+      INSERT INTO campos SELECT new.rowid, new.ambito, new.coleccion, key, value FROM json_each(new.datos)
+        WHERE type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND length(value) <= ${INDEXED_TEXT});
+    END;
+
+    CREATE TABLE IF NOT EXISTS publicaciones (id TEXT PRIMARY KEY, datos TEXT NOT NULL, actualizado TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS solicitudes (id TEXT PRIMARY KEY, datos TEXT NOT NULL, actualizado TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS vistas_previas (id TEXT PRIMARY KEY, html TEXT NOT NULL, expira INTEGER NOT NULL);
+    -- Contador de cambios por tabla de documentos (para refrescar cachés entre procesos).
+    CREATE TABLE IF NOT EXISTS versiones (tabla TEXT PRIMARY KEY, version INTEGER NOT NULL);
+
+    CREATE TABLE IF NOT EXISTS ejecuciones (
+      id      TEXT PRIMARY KEY,
+      app     TEXT NOT NULL,
+      origen  TEXT NOT NULL,
+      usuario TEXT,
+      inicio  TEXT NOT NULL,
+      fin     TEXT,
+      estado  TEXT NOT NULL,
+      resumen TEXT,
+      log     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ejecuciones_app ON ejecuciones (app, inicio);
   `);
+  // Bases de datos creadas antes de los índices: se rellenan una vez.
+  if ((d.pragma("user_version", { simple: true }) as number) < 2) {
+    d.exec(`
+      INSERT INTO registros_fts (registros_fts) VALUES ('rebuild');
+      DELETE FROM campos;
+      INSERT INTO campos SELECT r.rowid, r.ambito, r.coleccion, j.key, j.value FROM registros r, json_each(r.datos) j
+        WHERE j.type IN ('integer', 'real', 'true', 'false') OR (j.type = 'text' AND length(j.value) <= ${INDEXED_TEXT});
+      PRAGMA user_version = 2;
+    `);
+  }
 }
 
 export class DbError extends Error {}
@@ -173,7 +236,14 @@ export function list(ctx: DbContext, coll: unknown, opts: ListOptions = {}) {
 
   // Búsqueda de texto: todas las palabras deben aparecer en algún campo.
   if (typeof opts.buscar === "string" && opts.buscar.trim()) {
-    for (const word of normalize(opts.buscar).split(/\s+/).filter(Boolean).slice(0, 10)) {
+    const words = normalize(opts.buscar).split(/\s+/).filter(Boolean).slice(0, 10);
+    // Palabras de 3 o más letras: índice de texto completo. Más cortas: comparación directa.
+    const long = words.filter((w) => w.length >= 3);
+    if (long.length) {
+      where += " AND rowid IN (SELECT rowid FROM registros_fts WHERE registros_fts MATCH ?)";
+      params.push(long.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND "));
+    }
+    for (const word of words.filter((w) => w.length < 3)) {
       where += " AND busqueda LIKE ? ESCAPE '\\'";
       params.push(`%${word.replace(/[\\%_]/g, (m) => "\\" + m)}%`);
     }
@@ -183,8 +253,8 @@ export function list(ctx: DbContext, coll: unknown, opts: ListOptions = {}) {
     for (const [field, value] of Object.entries(opts.filtros as Record<string, unknown>).slice(0, 10)) {
       if (!FIELD.test(field)) throw new DbError(`Campo de filtro no válido: ${field}`);
       if (!["string", "number", "boolean"].includes(typeof value)) throw new DbError("Los filtros solo admiten textos, números o sí/no.");
-      where += " AND json_extract(datos, ?) = ?";
-      params.push(`$.${field}`, typeof value === "boolean" ? (value ? 1 : 0) : (value as string | number));
+      where += " AND rowid IN (SELECT rid FROM campos WHERE ambito = ? AND coleccion = ? AND campo = ? AND valor = ?)";
+      params.push(ctx.scope, c, field, typeof value === "boolean" ? (value ? 1 : 0) : (value as string | number));
     }
   }
 
@@ -285,6 +355,113 @@ export function purge(retention: { scope: string; days: number | null }[]): numb
     .prepare("DELETE FROM registros WHERE (ambito LIKE 'prueba:%' OR ambito LIKE 'revision:%') AND actualizado < ?")
     .run(cutoff(TEST_TTL_DAYS)).changes;
   return total;
+}
+
+// --- Historial de ejecuciones de automatizaciones -------------------------------
+
+export interface RunRow {
+  id: string;
+  app: string;
+  origen: "programada" | "manual";
+  usuario: string | null;
+  inicio: string;
+  fin: string | null;
+  estado: "en_curso" | "ok" | "error";
+  resumen: unknown;
+  log: unknown;
+}
+
+export function startRun(id: string, app: string, origen: RunRow["origen"], usuario: string | null) {
+  open().prepare("INSERT INTO ejecuciones (id, app, origen, usuario, inicio, estado) VALUES (?, ?, ?, ?, ?, 'en_curso')").run(id, app, origen, usuario, new Date().toISOString());
+}
+
+export function finishRun(id: string, estado: "ok" | "error", resumen: unknown, log: unknown) {
+  open().prepare("UPDATE ejecuciones SET fin = ?, estado = ?, resumen = ?, log = ? WHERE id = ?").run(new Date().toISOString(), estado, JSON.stringify(resumen), JSON.stringify(log), id);
+}
+
+export function listRuns(app: string, limit = 20): RunRow[] {
+  const rows = open().prepare("SELECT * FROM ejecuciones WHERE app = ? ORDER BY inicio DESC LIMIT ?").all(app, limit) as Record<string, string | null>[];
+  return rows.map((r) => ({ ...r, resumen: r.resumen ? JSON.parse(r.resumen) : null, log: r.log ? JSON.parse(r.log) : [] }) as RunRow);
+}
+
+/** Al arrancar, las ejecuciones que quedaron a medias (caída del servidor) se marcan como error. */
+export function abandonRuns() {
+  return open().prepare("UPDATE ejecuciones SET estado = 'error', fin = ?, resumen = '{\"error\":\"Interrumpida por reinicio del servidor\"}' WHERE estado = 'en_curso'").run(new Date().toISOString()).changes;
+}
+
+export function purgeRuns(days = 90) {
+  return open().prepare("DELETE FROM ejecuciones WHERE inicio < ?").run(new Date(Date.now() - days * 86_400_000).toISOString()).changes;
+}
+
+// --- Documentos de la plataforma (publicaciones, solicitudes) ----------------------
+
+/**
+ * Tabla de documentos JSON con caché en memoria. Cada escritura incrementa un
+ * contador de la tabla; si otro proceso la ha cambiado, la caché se recarga.
+ * Así varias instancias del servidor comparten los mismos datos, y las
+ * escrituras en los datos de las apps no invalidan esta caché.
+ */
+export function documents<T extends { id: string }>(table: "publicaciones" | "solicitudes", legacyJsonFile?: string) {
+  let cache: Map<string, T> | null = null;
+  let version = -1;
+  const reload = () => {
+    const d = open();
+    if (legacyJsonFile && fs.existsSync(legacyJsonFile)) {
+      // Migración desde la versión que guardaba todo en un fichero JSON.
+      const empty = !(d.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get());
+      if (empty) {
+        const items = JSON.parse(fs.readFileSync(legacyJsonFile, "utf8")) as T[];
+        const ins = d.prepare(`INSERT OR REPLACE INTO ${table} (id, datos, actualizado) VALUES (?, ?, ?)`);
+        d.transaction(() => items.forEach((x) => ins.run(x.id, JSON.stringify(x), new Date().toISOString())))();
+      }
+      fs.renameSync(legacyJsonFile, `${legacyJsonFile}.migrado`);
+    }
+    version = currentVersion();
+    cache = new Map((d.prepare(`SELECT datos FROM ${table} ORDER BY rowid`).all() as { datos: string }[]).map((r) => {
+      const x = JSON.parse(r.datos) as T;
+      return [x.id, x];
+    }));
+  };
+  const currentVersion = () => (open().prepare("SELECT version FROM versiones WHERE tabla = ?").get(table) as { version: number } | undefined)?.version ?? 0;
+  const fresh = () => {
+    if (!cache || currentVersion() !== version) reload();
+    return cache!;
+  };
+  return {
+    all: (): T[] => [...fresh().values()],
+    get: (id: string): T | undefined => fresh().get(id),
+    save(x: T) {
+      const c = fresh();
+      const d = open();
+      let stale = false;
+      d.transaction(() => {
+        // Si otro proceso cambió la tabla desde nuestra última lectura, recargaremos.
+        stale = currentVersion() !== version;
+        d.prepare(`INSERT INTO ${table} (id, datos, actualizado) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET datos = excluded.datos, actualizado = excluded.actualizado`).run(
+          x.id,
+          JSON.stringify(x),
+          new Date().toISOString(),
+        );
+        d.prepare("INSERT INTO versiones (tabla, version) VALUES (?, 1) ON CONFLICT(tabla) DO UPDATE SET version = version + 1").run(table);
+        version = currentVersion();
+      })();
+      if (stale) cache = null;
+      else c.set(x.id, x);
+    },
+  };
+}
+
+// --- Vistas previas (compartidas entre procesos) -----------------------------------
+
+export function putPreview(id: string, html: string, ttlMs: number) {
+  const d = open();
+  d.prepare("DELETE FROM vistas_previas WHERE expira < ?").run(Date.now());
+  d.prepare("INSERT OR REPLACE INTO vistas_previas (id, html, expira) VALUES (?, ?, ?)").run(id, html, Date.now() + ttlMs);
+}
+
+export function getPreview(id: string): string | null {
+  const r = open().prepare("SELECT html FROM vistas_previas WHERE id = ? AND expira >= ?").get(id, Date.now()) as { html: string } | undefined;
+  return r?.html ?? null;
 }
 
 /** Solo para pruebas automáticas. */

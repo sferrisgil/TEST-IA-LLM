@@ -13,6 +13,7 @@ import { PublishPanel } from "@/src/steps/PublishPanel";
 import { AiStep } from "@/src/steps/AiStep";
 import { DerivationPanel } from "@/src/steps/DerivationPanel";
 import { DEFAULT_MODELS, type ModelInfo } from "@/shared/aiAct";
+import type { Workflow } from "@/shared/workflow";
 import { api, type DerivationView, type Me } from "@/src/api";
 import { cn } from "@/lib/utils";
 
@@ -69,7 +70,9 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
     (async () => {
       try {
         setLoadError("");
-        const d = await api<{ id: string; respuestas: Answers; codigo: string | null; miembros: string[] }>(`/api/publicaciones/${editId.id}/editar`);
+        const d = await api<{ id: string; respuestas: Answers; codigo: string | null; miembros: string[]; flujo?: Workflow | null }>(
+          `/api/publicaciones/${editId.id}/editar`,
+        );
         const a = { ...d.respuestas, owner: me.nombre };
         setAnswers(a);
         setPublishedId(d.id);
@@ -80,7 +83,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
         if (d.codigo) {
           const pv = await api<{ codigo: string | null; vistaPrevia: string | null; hallazgos: ScanFinding[] }>("/api/vista-previa", { respuestas: a, codigo: d.codigo });
           if (pv.codigo && pv.vistaPrevia) {
-            setVersions([{ code: pv.codigo, preview: pv.vistaPrevia, constraintsKey: JSON.stringify(assess(a).constraints) }]);
+            setVersions([{ code: pv.codigo, preview: pv.vistaPrevia, constraintsKey: JSON.stringify(assess(a, models).constraints), workflow: d.flujo ?? null }]);
             setFindings(pv.hallazgos);
           }
         }
@@ -227,6 +230,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
                 answers={answers}
                 assessment={assessment}
                 code={versions[versions.length - 1]?.code ?? null}
+                workflow={versions[versions.length - 1]?.workflow ?? null}
                 acceptedAt={acceptedAt}
                 request={request}
                 setRequest={setRequest}
@@ -250,6 +254,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
                 answers={answers}
                 assessment={assessment}
                 code={versions[versions.length - 1]?.code ?? null}
+                workflow={versions[versions.length - 1]?.workflow ?? null}
                 acceptedAt={acceptedAt}
                 request={request}
                 setRequest={setRequest}
@@ -259,6 +264,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
                   answers={answers}
                   assessment={assessment}
                   code={versions[versions.length - 1].code}
+                  workflow={versions[versions.length - 1].workflow ?? null}
                   stale={versions[versions.length - 1].constraintsKey !== JSON.stringify(assessment.constraints)}
                   publishedId={publishedId}
                   setPublishedId={setPublishedId}
@@ -267,7 +273,7 @@ export function Builder({ me, status, editId }: { me: Me; status: Status; editId
                 />
               )}
               <FichaStep
-                ficha={{ answers, assessment, commitments, acceptedAt, versions: versions.length, findings }}
+                ficha={{ answers, assessment, commitments, acceptedAt, versions: versions.length, findings, workflow: versions[versions.length - 1]?.workflow }}
                 dpdEmail={status.correoDpd}
               />
             </div>

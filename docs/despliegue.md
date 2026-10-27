@@ -91,6 +91,13 @@ npm ci && npm run build
 NODE_ENV=production node dist/server.cjs   # como servicio systemd, usuario sin privilegios
 ```
 
+### Procesos, programador y escalado
+
+- `WORKERS=N` arranca N procesos que comparten el puerto y la base de datos (uno por núcleo de CPU). Solo uno de ellos ejecuta el programador de automatizaciones y las purgas.
+- Si se despliegan **varias máquinas**, el programador solo debe estar activo en una (`SCHEDULER_ENABLED=false` en las demás). Con SQLite, la configuración recomendada es una activa y otra de reserva con los datos replicados (ver [dimensionamiento](dimensionamiento.md)).
+- El servidor usa la hora local del sistema para las automatizaciones: configura `TZ=Europe/Madrid` en el servicio.
+- El límite de peticiones es por usuario y por proceso. En despliegues grandes, conviene añadir también un límite en el proxy o balanceador.
+
 ### Base de datos
 
 - Fichero SQLite `DATA_DIR/datos.sqlite` (modo WAL, permisos 0600). Para usarla con datos personales, **cifra el disco o volumen** donde esté `DATA_DIR`.

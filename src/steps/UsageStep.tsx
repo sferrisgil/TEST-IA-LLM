@@ -48,6 +48,11 @@ export function UsageStep({ answers, update }: { answers: Answers; update: (p: P
             </p>
           </div>
         </details>
+        {answers.appKind === "automatizacion" && !db && (
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            Para que la automatización se ejecute sola de forma programada, elige «En la base de datos municipal».
+          </p>
+        )}
         {db && (
           <div className="space-y-2 rounded-lg bg-muted/60 p-3">
             <p className="text-sm font-medium">¿Quién ve los registros guardados?</p>

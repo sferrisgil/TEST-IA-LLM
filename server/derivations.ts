@@ -20,6 +20,9 @@ import type { ModelInfo } from "../shared/aiAct";
 import { requireReviewer, requireStaff } from "./identity";
 import { link, notifyRequester, notifyStaff, type Message, type NotificationLog } from "./notify";
 import { store as publications } from "./store";
+import * as db from "./db";
+import { scheduleNext, validateWorkflow } from "./automations";
+import { WorkflowError, type Workflow } from "../shared/workflow";
 
 export type RequestStatus = "recibida" | "en_estudio" | "aprobada" | "rechazada" | "proyecto_ti";
 
@@ -61,6 +64,7 @@ export interface DerivationRequest {
   history: { date: string; user: string; action: string }[];
   notifications: NotificationLog[];
   publicationId?: string;
+  workflow?: Workflow;
 }
 
 // --- Almacén -----------------------------------------------------------------
@@ -68,13 +72,10 @@ export interface DerivationRequest {
 const DATA_DIR = path.resolve(process.env.DATA_DIR || "data");
 const INDEX = path.join(DATA_DIR, "solicitudes.json");
 const CODE_DIR = path.join(DATA_DIR, "solicitudes");
-let cache: DerivationRequest[] | null = null;
+const table = db.documents<DerivationRequest>("solicitudes", INDEX);
 
 function load(): DerivationRequest[] {
-  if (cache) return cache;
-  fs.mkdirSync(CODE_DIR, { recursive: true, mode: 0o750 });
-  cache = fs.existsSync(INDEX) ? JSON.parse(fs.readFileSync(INDEX, "utf8")) : [];
-  return cache!;
+  return table.all();
 }
 function write(file: string, content: string) {
   const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
@@ -82,12 +83,11 @@ function write(file: string, content: string) {
   fs.renameSync(tmp, file);
 }
 function save(r: DerivationRequest, code?: string | null) {
-  const list = load();
-  if (code) write(path.join(CODE_DIR, `${r.id}.html`), code);
-  const i = list.findIndex((x) => x.id === r.id);
-  if (i >= 0) list[i] = r;
-  else list.push(r);
-  write(INDEX, JSON.stringify(list, null, 2));
+  if (code) {
+    fs.mkdirSync(CODE_DIR, { recursive: true, mode: 0o750 });
+    write(path.join(CODE_DIR, `${r.id}.html`), code);
+  }
+  table.save(r);
 }
 function codeOf(r: DerivationRequest): string | null {
   if (!/^sol-[a-f0-9]+$/.test(r.id)) return null;
@@ -195,6 +195,16 @@ export function registerDerivations(app: Express, deps: Deps) {
     const findings = rawCode ? scanCode(rawCode, a.constraints) : [];
     const code = rawCode && !findings.some((f) => f.severity === "bloqueante") && !a.derivation.blocksBuild ? hardenHtml(rawCode, a.constraints) : null;
 
+    let workflow: Workflow | undefined;
+    let workflowError = "";
+    if (req.body?.flujo) {
+      try {
+        workflow = validateWorkflow(req.body.flujo, answers, a);
+      } catch (e) {
+        workflowError = e instanceof WorkflowError || e instanceof SyntaxError ? e.message : "Flujo no válido.";
+      }
+    }
+
     const ficha = fichaMarkdown({
       answers,
       assessment: a,
@@ -202,6 +212,7 @@ export function registerDerivations(app: Express, deps: Deps) {
       acceptedAt: typeof req.body?.aceptadoEn === "string" ? req.body.aceptadoEn.slice(0, 40) : null,
       versions: code ? 1 : 0,
       findings,
+      workflow,
     });
 
     const existingId = typeof req.body?.id === "string" ? req.body.id : "";
@@ -232,6 +243,7 @@ export function registerDerivations(app: Express, deps: Deps) {
       history: [...(r?.history || []), { date: now(), user: who.user, action: kind === "nueva" ? "Propuesta enviada" : "Propuesta actualizada" }],
       notifications: r?.notifications || [],
       publicationId: r?.publicationId,
+      workflow: workflow ?? r?.workflow,
     };
     save(r, code);
     // Envío automático de la ficha a TI / DPD.
@@ -241,7 +253,10 @@ export function registerDerivations(app: Express, deps: Deps) {
     deps.audit(kind === "nueva" ? "derivacion_creada" : "derivacion_actualizada", answers, a, { id: r.id, destinatarios: r.recipients.join(",") });
     res.json({
       ...view(r, false),
-      aviso: code || !rawCode ? undefined : "El prototipo no se ha adjuntado porque no supera la revisión de seguridad.",
+      aviso:
+        [code || !rawCode ? "" : "El prototipo no se ha adjuntado porque no supera la revisión de seguridad.", workflowError ? `La automatización no se ha adjuntado: ${workflowError}` : ""]
+          .filter(Boolean)
+          .join(" ") || undefined,
     });
   });
 
@@ -322,7 +337,12 @@ export function registerDerivations(app: Express, deps: Deps) {
         reviewBy: addMonths(new Date(), REVIEW_PERIOD_MONTHS).toISOString(),
         approvedBy: who.user,
         history: [{ date: now(), user: who.user, action: "Publicada por TI/DPD", comment: `Solicitud ${r.id}` }],
+        ownerEmail: r.requesterEmail,
+        workflow: r.workflow,
+        scheduleActive: r.workflow ? true : undefined,
+        nextRunAt: null,
       };
+      scheduleNext(published);
       publications.save(published, code);
       r.publicationId = published.id;
     }

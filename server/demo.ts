@@ -3,6 +3,7 @@
  * probar todo el flujo (cuestionario, evaluación, revisión, vista previa).
  */
 import type { Answers, Assessment } from "../shared/policy";
+import type { Step, Workflow } from "../shared/workflow";
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -155,5 +156,28 @@ ${script}
       (instruction ? ` Tu petición ("${instruction.slice(0, 120)}") se aplicaría con la IA activada.` : ""),
     codigo,
     sugerencias: ["Añade un campo de fecha", "Permite exportar a CSV", "Añade un buscador"],
+  };
+}
+
+/** Flujo de ejemplo: revisa cada mañana los registros nuevos y avisa al responsable. */
+export function demoWorkflow(a: Assessment): Workflow {
+  const process: Step[] = [
+    ...(a.constraints.ai
+      ? ([{ tipo: "ia", instruccion: "Resume en una frase este registro.", entrada: "{{item.titulo}}. {{item.notas}}", guardarEn: "resumen" }] as Step[])
+      : []),
+    {
+      tipo: "actualizar",
+      coleccion: "registros",
+      id: "{{item.id}}",
+      cambios: { procesado: "{{hoy}}", ...(a.constraints.ai ? { resumen: "{{resumen}}" } : {}) },
+    },
+  ];
+  return {
+    programacion: { tipo: "diaria", hora: "08:00" },
+    pasos: [
+      { tipo: "listar", coleccion: "registros", limite: 200, guardarEn: "registros" },
+      { tipo: "para_cada", lista: "registros", pasos: [{ tipo: "si", condicion: { campo: "item.procesado", op: "vacio" }, entonces: process }] },
+      { tipo: "notificar", mensaje: "Automatización diaria: revisados {{registros.length}} registros." },
+    ],
   };
 }
