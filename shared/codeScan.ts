@@ -55,6 +55,12 @@ const RULES: Rule[] = [
     message: "Guarda datos en el navegador, y la evaluación no lo permite.",
   },
   {
+    id: "bd-no-autorizada",
+    severity: (c) => (c.storage === "bd" ? null : "bloqueante"),
+    pattern: /BaseDatos\s*\.\s*(?:guardar|obtener|listar|borrar|vaciar|colecciones)/,
+    message: "Usa la base de datos municipal, pero la evaluación no lo autoriza.",
+  },
+  {
     id: "ia-no-autorizada",
     severity: (c) => (c.ai ? null : "bloqueante"),
     pattern: /IAMunicipal\s*\.\s*preguntar/,
@@ -98,30 +104,54 @@ export function scanCode(html: string, constraints: GenerationConstraints): Scan
 export const APP_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'";
 
-/** Puente con el asistente de IA municipal: solo funciona dentro de la plataforma. */
-const AI_BRIDGE = `
+/**
+ * Puentes con la plataforma (IA y base de datos): solo funcionan dentro de
+ * ella. La app envía un mensaje a la ventana que la contiene (vista previa o
+ * visor) y esta reenvía la petición al servidor, que aplica los permisos.
+ */
+function platformBridge(c: GenerationConstraints): string {
+  if (!c.ai && c.storage !== "bd") return "";
+  return `
 <script>
 (function(){
   var pending = {}; var n = 0;
   window.addEventListener('message', function(e){
     var d = e.data || {};
-    if (d.tipo !== 'ia-respuesta' || !pending[d.id]) return;
+    if (d.tipo !== 'plataforma-respuesta' || !pending[d.id]) return;
     var p = pending[d.id]; delete pending[d.id];
-    d.error ? p.reject(new Error(d.error)) : p.resolve(d.texto);
+    d.error ? p.reject(new Error(d.error)) : p.resolve(d.resultado);
   });
+  function llamar(servicio, op, args){
+    return new Promise(function(resolve, reject){
+      if (window.parent === window) { reject(new Error('Solo disponible dentro de la plataforma municipal.')); return; }
+      var id = 'p' + (++n);
+      pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({ tipo: 'plataforma', servicio: servicio, id: id, op: op, args: args }, '*');
+      setTimeout(function(){ if (pending[id]) { delete pending[id]; reject(new Error('Tiempo de espera agotado')); } }, 60000);
+    });
+  }${
+    c.ai
+      ? `
   window.IAMunicipal = {
-    preguntar: function(texto){
-      return new Promise(function(resolve, reject){
-        if (window.parent === window) { reject(new Error('El asistente de IA solo está disponible dentro de la plataforma municipal.')); return; }
-        var id = 'q' + (++n);
-        pending[id] = { resolve: resolve, reject: reject };
-        window.parent.postMessage({ tipo: 'ia-pregunta', id: id, texto: String(texto).slice(0, 8000) }, '*');
-        setTimeout(function(){ if (pending[id]) { delete pending[id]; reject(new Error('Tiempo de espera agotado')); } }, 60000);
-      });
-    }
-  };
+    preguntar: function(texto){ return llamar('ia', 'preguntar', [String(texto).slice(0, 8000)]); }
+  };`
+      : ""
+  }${
+    c.storage === "bd"
+      ? `
+  window.BaseDatos = {
+    guardar: function(coleccion, registro){ return llamar('bd', 'guardar', [coleccion, registro]); },
+    obtener: function(coleccion, id){ return llamar('bd', 'obtener', [coleccion, id]); },
+    listar: function(coleccion, opciones){ return llamar('bd', 'listar', [coleccion, opciones || {}]); },
+    borrar: function(coleccion, id){ return llamar('bd', 'borrar', [coleccion, id]); },
+    vaciar: function(coleccion){ return llamar('bd', 'vaciar', [coleccion]); },
+    colecciones: function(){ return llamar('bd', 'colecciones', []); }
+  };`
+      : ""
+  }
 })();
 </script>`;
+}
 
 /**
  * En la vista previa (iframe aislado) el navegador no da acceso a
@@ -198,9 +228,9 @@ export function hardenHtml(
     `<!--plataforma:inicio-->` +
     `<meta http-equiv="Content-Security-Policy" content="${APP_CSP}">` +
     `<meta name="referrer" content="no-referrer">` +
-    (constraints.ai ? AI_BRIDGE : "") +
+    platformBridge(constraints) +
     (opts.preview && constraints.storage !== "ninguno" ? PREVIEW_STORAGE_SHIM : "") +
-    (opts.published && constraints.storage !== "ninguno" ? PUBLISHED_STORAGE_SHIM : "") +
+    (opts.published && constraints.storage !== "ninguno" && constraints.storage !== "bd" ? PUBLISHED_STORAGE_SHIM : "") +
     `<!--plataforma:fin-->`;
   return doc.replace(/<head([^>]*)>/i, `<head$1>${block}`);
 }

@@ -36,7 +36,8 @@
 ### Aislamiento de las apps publicadas
 
 - Cada app se abre en un **visor** de la plataforma (cabecera con nombre, versión, nivel de riesgo y responsable) que la carga en un **iframe aislado** (`sandbox` sin `allow-same-origin` + CSP `connect-src 'none'`): la app no puede llamar a la API, leer la sesión del usuario, ni enviar datos a ningún sitio.
-- Si la evaluación permite guardar datos «en el navegador», el visor los guarda en el navegador de cada persona, **separados por app y por usuario**. Los datos no se guardan en el servidor.
+- Si la app guarda datos **en el navegador**, el visor los guarda en el navegador de cada persona, **separados por app y por usuario**; no llegan al servidor.
+- Si la app usa la **base de datos municipal**, las peticiones pasan por el visor al servidor, que comprueba que la persona tiene acceso a la app y aplica el modo **compartido** o **por persona** de la evaluación guardada. Las apps pendientes de revisión usan un espacio de pruebas aparte, nunca los datos reales.
 - Si la app usa IA, el visor hace de puente con el servidor, que comprueba la autorización con la **evaluación guardada** (no la del navegador) y enmascara los datos personales.
 
 ### Ejemplo de proxy (nginx + oauth2-proxy)
@@ -90,7 +91,15 @@ npm ci && npm run build
 NODE_ENV=production node dist/server.cjs   # como servicio systemd, usuario sin privilegios
 ```
 
-Copias de seguridad: basta con `DATA_DIR` (`publicaciones.json` y `apps/*.html`). Los registros de auditoría salen por la salida estándar en JSON (enviar a journald/SIEM).
+### Base de datos
+
+- Fichero SQLite `DATA_DIR/datos.sqlite` (modo WAL, permisos 0600). Para usarla con datos personales, **cifra el disco o volumen** donde esté `DATA_DIR`.
+- Cada registro guarda la app, la colección, el usuario que lo creó y las fechas; el contenido va en JSON y no se puede consultar con SQL libre.
+- **Conservación**: cada hora se borran los registros que superan el plazo de la app y los datos de prueba con más de un día.
+- **Derechos de las personas** (acceso, supresión): la persona responsable y los revisores pueden exportar y borrar los datos de una app desde la plataforma. Las escrituras, exportaciones y borrados quedan en el registro de auditoría (sin contenido).
+- Escala orientativa: miles de apps pequeñas y cientos de miles de registros. Si se necesita más, o acceso concurrente intensivo, se puede pasar a PostgreSQL cambiando solo `server/db.ts`.
+
+Copias de seguridad: basta con `DATA_DIR` (`publicaciones.json`, `apps/*.html` y `datos.sqlite`). Para copiar la base de datos en caliente usa `sqlite3 datos.sqlite ".backup copia.sqlite"`. Los registros de auditoría salen por la salida estándar en JSON (enviar a journald/SIEM).
 
 ## Fase 2 (futura): acceso público a apps concretas
 

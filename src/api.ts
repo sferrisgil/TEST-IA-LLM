@@ -27,6 +27,8 @@ export interface PublicationSummary {
   actualizada: string;
   accesoExterno: "no_aplica" | "solicitado" | "aprobado";
   url: string;
+  almacenamiento: "ninguno" | "sesion" | "local" | "bd";
+  registros?: number;
   miembros?: string[];
   historial?: HistoryEntry[];
   propia?: boolean;

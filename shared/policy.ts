@@ -26,7 +26,9 @@ export type DataCategory =
 export type Audience = "personal" | "equipo" | "departamento" | "plantilla" | "externos" | "publico";
 export type Origin = "propios" | "sistemas" | "ciudadanos" | "terceros" | "abiertos";
 export type Volume = "pocos" | "medio" | "masivo";
-export type Storage = "ninguno" | "navegador" | "servidor_municipal" | "nube_externa";
+export type Storage = "ninguno" | "navegador" | "base_datos" | "nube_externa";
+/** Con base de datos: ¿todos los usuarios comparten los registros o cada uno ve los suyos? */
+export type DbScope = "compartida" | "personal";
 export type AiUse = "no" | "sin_datos" | "con_datos";
 export type Decisions = "informativa" | "apoyo" | "automatica" | "perfilado";
 export type Integrations = "ninguna" | "lectura" | "escritura";
@@ -43,10 +45,13 @@ export interface Answers {
   volume: Volume;
   audience: Audience;
   storage: Storage;
+  dbScope: DbScope;
   aiUse: AiUse;
   decisions: Decisions;
   integrations: Integrations;
   retention: Retention;
+  /** Días de conservación cuando la retención es limitada. */
+  retentionDays: number;
   /** Hallazgos del analizador local de ejemplos (solo tipos, nunca valores). */
   detectedCategories: DataCategory[];
 }
@@ -57,7 +62,11 @@ export interface GenerationConstraints {
   /** La app no puede comunicarse con ningún servidor externo. */
   network: "ninguna";
   /** Dónde puede guardar datos la app generada. */
-  storage: "ninguno" | "sesion" | "local";
+  storage: "ninguno" | "sesion" | "local" | "bd";
+  /** Solo con "bd": registros compartidos entre usuarios o por persona. */
+  dbScope: DbScope;
+  /** Solo con "bd": días tras los que se borran los registros (null = sin límite). */
+  retentionDays: number | null;
   /** Si la app puede usar el asistente de IA municipal (con enmascarado). */
   ai: boolean;
   /** Solo se permite trabajar con datos ficticios (prototipo). */
@@ -129,8 +138,16 @@ export const VOLUMES: { id: Volume; label: string }[] = [
 
 export const STORAGES: { id: Storage; label: string; help: string }[] = [
   { id: "ninguno", label: "No guarda nada", help: "Al cerrar la pestaña se borra todo" },
-  { id: "navegador", label: "En mi navegador", help: "Queda en el ordenador donde se usa" },
-  { id: "servidor_municipal", label: "En un servidor del Ayuntamiento", help: "Requiere intervención de TI" },
+  {
+    id: "navegador",
+    label: "En el navegador (como las cookies)",
+    help: "Solo en el ordenador y navegador donde se usa. Sencillo, pero no se comparte, no se puede consultar desde otro equipo y se pierde si se borra el navegador",
+  },
+  {
+    id: "base_datos",
+    label: "En la base de datos municipal (SQL)",
+    help: "En el servidor interno: desde cualquier equipo o navegador, compartida si se quiere, con búsquedas y copias de seguridad",
+  },
   { id: "nube_externa", label: "En un servicio externo (Google Drive, Dropbox…)", help: "Fuera del control municipal" },
 ];
 
@@ -151,6 +168,11 @@ export const INTEGRATIONS: { id: Integrations; label: string }[] = [
   { id: "ninguna", label: "No se conecta con nada" },
   { id: "lectura", label: "Consulta datos de otras aplicaciones" },
   { id: "escritura", label: "Modifica datos en otras aplicaciones" },
+];
+
+export const DB_SCOPES: { id: DbScope; label: string; help: string }[] = [
+  { id: "compartida", label: "Compartidos", help: "Todas las personas con acceso a la app ven y editan los mismos registros (p. ej. un inventario del equipo)" },
+  { id: "personal", label: "Cada persona los suyos", help: "Cada usuario solo ve los registros que ha creado (p. ej. una agenda personal)" },
 ];
 
 export const RETENTIONS: { id: Retention; label: string }[] = [
@@ -190,10 +212,12 @@ export function emptyAnswers(): Answers {
     volume: "pocos",
     audience: "personal",
     storage: "ninguno",
+    dbScope: "compartida",
     aiUse: "no",
     decisions: "informativa",
     integrations: "ninguna",
     retention: "sesion",
+    retentionDays: 365,
     detectedCategories: [],
   };
 }
@@ -222,11 +246,13 @@ export function sanitizeAnswers(input: unknown): Answers {
     origin: arr(a.origin, ORIGINS.map((o) => o.id)),
     volume: oneOf(a.volume, VOLUMES.map((v) => v.id), base.volume),
     audience: oneOf(a.audience, AUDIENCES.map((v) => v.id), base.audience),
-    storage: oneOf(a.storage, STORAGES.map((v) => v.id), base.storage),
+    storage: oneOf(a.storage === "servidor_municipal" ? "base_datos" : a.storage, STORAGES.map((v) => v.id), base.storage),
+    dbScope: oneOf(a.dbScope, DB_SCOPES.map((v) => v.id), base.dbScope),
     aiUse: oneOf(a.aiUse, AI_USES.map((v) => v.id), base.aiUse),
     decisions: oneOf(a.decisions, DECISIONS.map((v) => v.id), base.decisions),
     integrations: oneOf(a.integrations, INTEGRATIONS.map((v) => v.id), base.integrations),
     retention: oneOf(a.retention, RETENTIONS.map((v) => v.id), base.retention),
+    retentionDays: Math.min(3650, Math.max(1, Math.round(Number(a.retentionDays) || base.retentionDays))),
     detectedCategories: arr(a.detectedCategories, cats),
   };
 }
@@ -267,7 +293,7 @@ export function assess(answers: Answers): Assessment {
       (answers.aiUse === "con_datos" ? 10 : 0) +
       (answers.decisions === "automatica" || answers.decisions === "perfilado" ? 20 : 0) +
       (answers.integrations === "escritura" ? 10 : answers.integrations === "lectura" ? 4 : 0) +
-      (answers.storage === "nube_externa" ? 15 : answers.storage === "servidor_municipal" ? 4 : 0),
+      (answers.storage === "nube_externa" ? 15 : answers.storage === "base_datos" ? 4 : 0),
   );
 
   // --- Reglas que bloquean el autoservicio --------------------------------
@@ -306,9 +332,6 @@ export function assess(answers: Answers): Assessment {
   if (sensitive.length > 0 && contractors) {
     raise("alto", "Datos especialmente protegidos accesibles por empresas contratistas.");
   }
-  if (answers.storage === "servidor_municipal" && personalData && answers.audience !== "personal") {
-    raise("alto", "Necesita un servidor con datos personales compartidos: requiere alta en los sistemas de TI.");
-  }
 
   // --- Riesgo medio ---------------------------------------------------------
   if (personalData) raise("medio", "Trata datos personales: aplica el RGPD.");
@@ -323,6 +346,12 @@ export function assess(answers: Answers): Assessment {
   if (answers.aiUse === "con_datos") raise("medio", "Envía a la IA el contenido que se introduce (se enmascararán los datos personales).");
   if (answers.integrations === "lectura") raise("medio", "Consulta datos de otras aplicaciones municipales.");
   if (answers.decisions === "apoyo" && personalData) raise("medio", "Ayuda a tomar decisiones sobre personas: una persona debe revisar siempre el resultado.");
+  if (answers.storage === "base_datos" && personalData) {
+    raise("medio", "Guarda datos personales en la base de datos municipal.");
+    if (answers.dbScope === "compartida" && answers.audience !== "personal") {
+      raise("medio", "Los registros con datos personales serán visibles para todas las personas que usen la app.");
+    }
+  }
   if (answers.origin.includes("ciudadanos")) raise("medio", "Recoge datos que introducen vecinos/as o empresas.");
   if (answers.origin.includes("sistemas") && personalData) raise("medio", "Usa datos extraídos de sistemas municipales: respeta la finalidad original.");
 
@@ -339,11 +368,15 @@ export function assess(answers: Answers): Assessment {
     storage:
       answers.storage === "ninguno" || level === "alto"
         ? "ninguno"
-        : answers.storage === "navegador" && (!personalData || answers.audience === "personal" || answers.audience === "equipo")
-          ? "local"
-          : personalData
-            ? "sesion"
-            : "local",
+        : answers.storage === "base_datos"
+          ? "bd"
+          : answers.storage === "navegador" && (!personalData || answers.audience === "personal" || answers.audience === "equipo")
+            ? "local"
+            : personalData
+              ? "sesion"
+              : "local",
+    dbScope: answers.dbScope,
+    retentionDays: answers.retention === "indefinida" ? null : answers.retention === "sesion" ? 1 : answers.retentionDays,
     ai: answers.aiUse !== "no" && level !== "no_permitido",
     syntheticDataOnly: level === "alto",
     accessibility: answers.audience === "publico" || answers.audience === "plantilla",
@@ -358,6 +391,21 @@ export function assess(answers: Answers): Assessment {
   if (constraints.storage === "ninguno") controls.push("La aplicación no guardará datos: se borran al cerrarla.");
   if (constraints.storage === "sesion") controls.push("Los datos solo se guardan mientras la pestaña está abierta.");
   if (constraints.storage === "local") controls.push("Los datos se guardan solo en el navegador del equipo donde se usa.");
+  if (answers.storage === "navegador" && constraints.storage === "sesion") {
+    controls.push("Con datos personales compartidos, el navegador solo puede guardar datos mientras la pestaña está abierta: si necesitas conservarlos, elige la base de datos municipal.");
+  }
+  if (constraints.storage === "bd") {
+    controls.push(
+      `Los datos se guardan en la base de datos municipal, separados por aplicación${constraints.dbScope === "personal" ? " y por persona" : ""}, accesibles solo para los usuarios autorizados y con copias de seguridad.`,
+    );
+    controls.push(
+      constraints.retentionDays
+        ? `Los registros sin cambios durante ${constraints.retentionDays} día(s) se borrarán automáticamente.`
+        : "Los registros se conservarán hasta que se borren.",
+    );
+    controls.push("Mientras construyes, la app usa una base de datos de pruebas separada que se vacía sola.");
+  }
+  if (level === "alto" && answers.storage !== "ninguno") controls.push("En modo prototipo no se guardan datos.");
   if (constraints.deleteButton) controls.push("Incluirá un botón visible para borrar todos los datos.");
   if (constraints.privacyNotice) controls.push("Incluirá un aviso de privacidad con la finalidad y el responsable.");
   if (constraints.ai) controls.push("El asistente de IA de la app solo funciona dentro de la plataforma y enmascara los datos personales antes de enviarlos.");
@@ -376,6 +424,9 @@ export function assess(answers: Answers): Assessment {
   if (contractors) obligations.push("Las contratas que la usen deben tener contrato de encargo de tratamiento o acuerdo de confidencialidad que cubra este uso.");
   if (isPublic) obligations.push("La publicación en internet llegará en una fase posterior y requerirá aprobación de TI y Comunicación, con declaración de accesibilidad. Mientras tanto se publicará solo en la intranet.");
   if (answers.aiUse !== "no") obligations.push("Indica en la app que usa IA y que sus respuestas pueden contener errores (transparencia, Reglamento de IA).");
+  if (constraints.storage === "bd" && personalData) {
+    obligations.push("Atiende las solicitudes de acceso o supresión de datos: desde «Mis apps» puedes exportar y borrar los registros.");
+  }
   if (answers.retention === "indefinida" && personalData) obligations.push("Define un plazo de conservación: los datos personales no pueden guardarse indefinidamente.");
   if (answers.audience !== "personal") obligations.push("Nombra a una persona responsable de mantenerla y de darla de baja cuando deje de usarse.");
   obligations.push("No introduzcas contraseñas, claves ni datos de otras personas que no necesites.");

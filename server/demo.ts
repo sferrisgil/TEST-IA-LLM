@@ -28,6 +28,75 @@ export function demoApp(answers: Answers, a: Assessment, instruction: string) {
   const store =
     c.storage === "local" ? "localStorage" : c.storage === "sesion" ? "sessionStorage" : null;
 
+  const aiCode = c.ai
+    ? `var r = document.getElementById('resumir');
+  r.onclick = async function () {
+    var out = document.getElementById('ia'); out.textContent = 'Pensando…';
+    try { out.textContent = await window.IAMunicipal.preguntar('Resume: ' + items.map(function (x) { return x.titulo; }).join('; ')); }
+    catch (e) { out.textContent = e.message; }
+  };`
+    : "";
+
+  const script =
+    c.storage === "bd"
+      ? `  var items = [];
+  var q = document.getElementById('buscar');
+  async function cargar() {
+    try {
+      var r = await BaseDatos.listar('registros', { buscar: q.value, limite: 100 });
+      items = r.registros; pintar(r.total);
+    } catch (e) { alert(e.message); }
+  }
+  function pintar(total) {
+    var ul = document.getElementById('lista'); ul.textContent = '';
+    items.forEach(function (it) {
+      var li = document.createElement('li');
+      li.textContent = it.titulo + (it.notas ? ' — ' + it.notas : '') + ' (' + it._autor + ')';
+      var b = document.createElement('button'); b.className = 'sec'; b.textContent = 'Eliminar';
+      b.setAttribute('aria-label', 'Eliminar ' + it.titulo);
+      b.onclick = async function () { await BaseDatos.borrar('registros', it.id); cargar(); };
+      li.appendChild(document.createTextNode(' ')); li.appendChild(b); ul.appendChild(li);
+    });
+    document.getElementById('n').textContent = total;
+  }
+  document.getElementById('f').onsubmit = async function (e) {
+    e.preventDefault();
+    try {
+      await BaseDatos.guardar('registros', { titulo: document.getElementById('titulo').value, notas: document.getElementById('notas').value });
+      e.target.reset(); cargar();
+    } catch (err) { alert(err.message); }
+  };
+  var t; q.oninput = function () { clearTimeout(t); t = setTimeout(cargar, 250); };
+  var bb = document.getElementById('borrar');
+  if (bb) bb.onclick = async function () { if (confirm('¿Borrar todos los datos?')) { await BaseDatos.vaciar('registros'); cargar(); } };
+  ${aiCode}
+  cargar();`
+      : `  var KEY = 'app-registros';
+  var items = [];
+  ${store ? `try { items = JSON.parse(${store}.getItem(KEY) || '[]'); } catch (e) { items = []; }` : ""}
+  function guardar() { ${store ? `try { ${store}.setItem(KEY, JSON.stringify(items)); } catch (e) {}` : ""} }
+  function pintar() {
+    var ul = document.getElementById('lista'); ul.textContent = '';
+    items.forEach(function (it, i) {
+      var li = document.createElement('li');
+      li.textContent = it.titulo + (it.notas ? ' — ' + it.notas : '');
+      var b = document.createElement('button'); b.className = 'sec'; b.textContent = 'Eliminar';
+      b.setAttribute('aria-label', 'Eliminar ' + it.titulo);
+      b.onclick = function () { items.splice(i, 1); guardar(); pintar(); };
+      li.appendChild(document.createTextNode(' ')); li.appendChild(b); ul.appendChild(li);
+    });
+    document.getElementById('n').textContent = items.length;
+  }
+  document.getElementById('f').onsubmit = function (e) {
+    e.preventDefault();
+    items.push({ titulo: document.getElementById('titulo').value, notas: document.getElementById('notas').value });
+    e.target.reset(); guardar(); pintar();
+  };
+  var bb = document.getElementById('borrar');
+  if (bb) bb.onclick = function () { if (confirm('¿Borrar todos los datos?')) { items = []; guardar(); pintar(); } };
+  ${aiCode}
+  pintar();`;
+
   const codigo = `<!doctype html>
 <html lang="es">
 <head>
@@ -66,44 +135,16 @@ ${c.syntheticDataOnly ? '<div class="banner" role="alert">PROTOTIPO – usar sol
   </section>
   <section class="card" aria-labelledby="t-lista">
     <h2 id="t-lista">Registros (<span id="n">0</span>)</h2>
+    ${c.storage === "bd" ? '<label for="buscar">Buscar</label><input id="buscar" type="search" placeholder="Escribe para buscar en todos los campos">' : ""}
     <ul id="lista"></ul>
     ${c.deleteButton ? '<button class="sec" id="borrar">Borrar todos los datos</button>' : ""}
   </section>
   ${c.ai ? `<section class="card"><h2>Asistente</h2><button id="resumir">Resumir registros con IA</button><p id="ia" aria-live="polite"></p><p><small>Las respuestas de la IA pueden contener errores: revísalas siempre.</small></p></section>` : ""}
-  ${c.privacyNotice ? `<section class="card"><h2>Aviso de privacidad</h2><p>Finalidad: ${esc(answers.purpose || "la indicada por el servicio")}. Responsable: ${esc(answers.department || "el Ayuntamiento")}. Los datos no salen de este navegador${store ? "" : " y se borran al cerrar la página"}.</p></section>` : ""}
+  ${c.privacyNotice ? `<section class="card"><h2>Aviso de privacidad</h2><p>Finalidad: ${esc(answers.purpose || "la indicada por el servicio")}. Responsable: ${esc(answers.department || "el Ayuntamiento")}. ${c.storage === "bd" ? `Los datos se guardan en la base de datos municipal${c.retentionDays ? ` y se borran a los ${c.retentionDays} días sin cambios` : ""}` : `Los datos no salen de este navegador${store ? "" : " y se borran al cerrar la página"}`}.</p></section>` : ""}
 </main>
 <footer>${name} · Responsable: ${esc(answers.owner || "—")} · Creada con el Taller de Apps IA del Ayuntamiento</footer>
 <script>
-  var KEY = 'app-registros';
-  var items = [];
-  ${store ? `try { items = JSON.parse(${store}.getItem(KEY) || '[]'); } catch (e) { items = []; }` : ""}
-  function guardar() { ${store ? `try { ${store}.setItem(KEY, JSON.stringify(items)); } catch (e) {}` : ""} }
-  function pintar() {
-    var ul = document.getElementById('lista'); ul.textContent = '';
-    items.forEach(function (it, i) {
-      var li = document.createElement('li');
-      li.textContent = it.titulo + (it.notas ? ' — ' + it.notas : '');
-      var b = document.createElement('button'); b.className = 'sec'; b.textContent = 'Eliminar';
-      b.setAttribute('aria-label', 'Eliminar ' + it.titulo);
-      b.onclick = function () { items.splice(i, 1); guardar(); pintar(); };
-      li.appendChild(document.createTextNode(' ')); li.appendChild(b); ul.appendChild(li);
-    });
-    document.getElementById('n').textContent = items.length;
-  }
-  document.getElementById('f').onsubmit = function (e) {
-    e.preventDefault();
-    items.push({ titulo: document.getElementById('titulo').value, notas: document.getElementById('notas').value });
-    e.target.reset(); guardar(); pintar();
-  };
-  var bb = document.getElementById('borrar');
-  if (bb) bb.onclick = function () { if (confirm('¿Borrar todos los datos?')) { items = []; guardar(); pintar(); } };
-  ${c.ai ? `var r = document.getElementById('resumir');
-  r.onclick = async function () {
-    var out = document.getElementById('ia'); out.textContent = 'Pensando…';
-    try { out.textContent = await window.IAMunicipal.preguntar('Resume: ' + items.map(function (x) { return x.titulo; }).join('; ')); }
-    catch (e) { out.textContent = e.message; }
-  };` : ""}
-  pintar();
+${script}
 </script>
 </body>
 </html>`;

@@ -10,6 +10,8 @@ import { demoApp, demoClarify } from "./server/demo";
 import { AUTH_MODE, currentDevProfile, DEV_PROFILES, requireIdentity, requireStaff, identify } from "./server/identity";
 import { internalOnly, PRIVATE_NETWORKS } from "./server/network";
 import { registerPortal } from "./server/portal";
+import * as db from "./server/db";
+import { store } from "./server/store";
 
 dotenv.config();
 
@@ -115,6 +117,22 @@ function constraintsText(a: Assessment): string {
   if (c.storage === "ninguno") lines.push("- NO guardes datos de ningún modo (ni localStorage, ni sessionStorage, ni indexedDB). Todo se pierde al cerrar.");
   if (c.storage === "sesion") lines.push("- Solo puedes usar sessionStorage (nunca localStorage ni indexedDB). Envuelve su uso en try/catch.");
   if (c.storage === "local") lines.push("- Puedes usar localStorage para guardar datos en el navegador. Envuelve su uso en try/catch y que la app funcione aunque falle.");
+  if (c.storage === "bd") {
+    lines.push(
+      `- Guarda los datos en la base de datos municipal usando SOLO \`window.BaseDatos\` (ya está disponible; no lo definas). Todas las funciones devuelven promesas; usa async/await y try/catch mostrando los errores al usuario:
+  · \`await BaseDatos.guardar(coleccion, registro)\` crea o, si el registro trae \`id\`, actualiza. Devuelve el registro con \`id\`, \`_creado\`, \`_actualizado\` y \`_autor\`.
+  · \`await BaseDatos.obtener(coleccion, id)\` devuelve el registro o null.
+  · \`await BaseDatos.listar(coleccion, { buscar: "texto", filtros: { campo: valor }, orden: "campo", descendente: true, limite: 50, desde: 0 })\` devuelve \`{ registros, total }\`. "buscar" busca en todos los campos; úsalo para el buscador de la app y pagina con limite/desde.
+  · \`await BaseDatos.borrar(coleccion, id)\`, \`await BaseDatos.vaciar(coleccion)\`, \`await BaseDatos.colecciones()\`.
+  Las colecciones son nombres sencillos (p. ej. "incidencias"). Los registros son objetos JSON planos (máx. 64 KB). No uses localStorage ni indexedDB.`,
+    );
+    lines.push(
+      c.dbScope === "personal"
+        ? "- Cada persona solo ve sus propios registros (lo garantiza la plataforma)."
+        : "- Los registros son compartidos por todas las personas que usan la app: muestra quién creó cada registro (`_autor`) cuando sea útil.",
+    );
+    if (c.retentionDays) lines.push(`- Indica en la app que los registros sin cambios se borran automáticamente a los ${c.retentionDays} días.`);
+  }
   if (c.deleteButton) lines.push("- Incluye un botón visible \"Borrar todos los datos\" con confirmación.");
   if (c.privacyNotice) lines.push("- Incluye un apartado visible \"Aviso de privacidad\" que indique la finalidad, el responsable y que los datos no salen del navegador.");
   if (c.syntheticDataOnly) lines.push("- MODO PROTOTIPO: muestra una franja superior fija muy visible: \"PROTOTIPO – usar solo datos ficticios\". Precarga solo datos inventados.");
@@ -348,20 +366,34 @@ app.post("/api/vista-previa", requireStaff, rateLimit(30, 5 * 60_000), (req, res
   res.json({ hallazgos: findings, codigo, vistaPrevia: storePreview(hardenHtml(codigo, a.constraints, { preview: true })) });
 });
 
-/** Asistente de IA para las apps generadas (vía puente postMessage). */
-app.post("/api/ia-app", requireStaff, rateLimit(30, 5 * 60_000), async (req, res) => {
+/**
+ * Servicios de la plataforma para la app en construcción (vista previa):
+ * IA y base de datos de PRUEBAS (separada de los datos reales y temporal).
+ */
+app.post("/api/plataforma-prueba", requireStaff, rateLimit(300, 5 * 60_000), async (req, res) => {
+  const who = req.identity!;
+  const answers = sanitizeAnswers(req.body?.respuestas);
+  const a = assess(answers);
+  const { servicio, op } = req.body || {};
+  const args = Array.isArray(req.body?.args) ? req.body.args : [];
   try {
-    const answers = sanitizeAnswers(req.body?.respuestas);
-    const a = assess(answers);
-    if (!a.constraints.ai) return res.status(403).json({ error: "Esta aplicación no está autorizada a usar IA." });
-    const q = mask(req.body?.texto, 8000);
-    if (!q.text.trim()) return res.status(400).json({ error: "Pregunta vacía." });
-    audit("ia_app", answers, a, { enmascarados: q.replaced });
-    const texto = await askAi(answers, q.text);
-    res.json({ texto, enmascarados: q.replaced });
+    if (servicio === "ia") {
+      if (!a.constraints.ai) return res.status(403).json({ error: "Esta aplicación no está autorizada a usar IA." });
+      const q = mask(args[0], 8000);
+      if (!q.text.trim()) return res.status(400).json({ error: "Pregunta vacía." });
+      audit("ia_app_prueba", answers, a, { enmascarados: q.replaced });
+      return res.json({ resultado: await askAi(answers, q.text) });
+    }
+    if (servicio === "bd") {
+      if (a.constraints.storage !== "bd") return res.status(403).json({ error: "Esta aplicación no está autorizada a usar la base de datos." });
+      const ctx = { scope: `prueba:${who.user}`, user: who.user, dbScope: a.constraints.dbScope };
+      return res.json({ resultado: db.execute(ctx, op, args) });
+    }
+    res.status(400).json({ error: "Servicio desconocido." });
   } catch (error) {
-    console.error("Error en /api/ia-app:", error);
-    res.status(500).json({ error: "El asistente de IA no está disponible." });
+    if (error instanceof db.DbError) return res.status(400).json({ error: error.message });
+    console.error("Error en /api/plataforma-prueba:", error);
+    res.status(500).json({ error: "El servicio no está disponible." });
   }
 });
 
@@ -379,6 +411,22 @@ async function start() {
     app.use(express.static(distPath));
     app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
+  // Borrado automático de datos que superan su plazo de conservación.
+  const purge = () => {
+    try {
+      const retention = store
+        .all()
+        .filter((p) => p.assessment.constraints.storage === "bd")
+        .map((p) => ({ scope: `app:${p.id}`, days: p.assessment.constraints.retentionDays }));
+      const n = db.purge(retention);
+      if (n) console.log(JSON.stringify({ ts: new Date().toISOString(), evento: "purga_conservacion", registros: n }));
+    } catch (error) {
+      console.error("Error en la purga de datos:", error);
+    }
+  };
+  purge();
+  setInterval(purge, 60 * 60_000).unref();
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Taller de Apps IA en http://localhost:${PORT}${DEMO ? " (modo demostración, sin IA)" : ""}`);
   });

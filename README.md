@@ -10,7 +10,7 @@ La idea central: **la IA construye, pero las reglas las pone el Ayuntamiento.** 
 |---|---|
 | 1. Tu idea | Describe la app con tus palabras. La IA propone nombre, finalidad y preguntas para concretar la funcionalidad. Se identifica a la persona responsable. |
 | 2. Los datos | Marca qué tipo de información usará (con ejemplos en lenguaje llano). Puedes **pegar un ejemplo de los datos**: se analiza **solo en el navegador** (DNI/NIE con letra de control, IBAN, tarjetas, NSS, teléfonos, correos, direcciones, matrículas, credenciales y palabras que indican salud, menores, servicios sociales, datos penales…). Lo detectado cuenta en la evaluación aunque no se marque. |
-| 3. El uso | Quién la usará (solo yo, equipo, departamento, plantilla, empresas externas, ciudadanía), dónde se guardan los datos, si usa IA, si interviene en decisiones sobre personas, integraciones y conservación. |
+| 3. El uso | Quién la usará (solo yo, equipo, departamento, plantilla, contratas por VPN, ciudadanía), **dónde se guardan los datos** (nada, el navegador o la **base de datos municipal SQL**), si usa IA, si interviene en decisiones sobre personas, integraciones y conservación. |
 | 4. Evaluación | Semáforo de riesgo con los motivos, las medidas que aplica la herramienta, las obligaciones del responsable y los compromisos de uso que hay que aceptar. |
 | 5. Construir | Conversación con la IA para crear y ajustar la app, con vista previa aislada, revisión de seguridad automática, deshacer y descarga. |
 | 6. Ficha y publicación | Publicación en la intranet (directa si el riesgo es bajo; si no, tras revisión de TI/DPD) y ficha de la aplicación (Markdown/JSON) para el inventario y el Registro de Actividades de Tratamiento. |
@@ -22,6 +22,16 @@ Además de **Crear app**, la plataforma tiene:
 - **Revisión** (TI y DPD): aprobar o rechazar publicaciones, probar las apps e inventario completo.
 
 Detalles de arquitectura, control de acceso, ciclo de publicación, configuración del proxy/SSO y propuesta de **fase 2 (acceso público)**: [docs/despliegue.md](docs/despliegue.md).
+
+## Dónde guardan los datos las apps
+
+| Opción | Cuándo usarla | Cómo funciona |
+|---|---|---|
+| **No guarda nada** | Calculadoras, consultas puntuales | Todo se borra al cerrar |
+| **En el navegador** (como las cookies) | Herramientas personales sencillas | Los datos quedan solo en ese ordenador y navegador, separados por app y usuario. No se comparten ni tienen copia de seguridad |
+| **Base de datos municipal (SQL)** | Datos que se comparten, se consultan desde varios equipos o necesitan búsquedas | SQLite en el servidor interno. Registros **compartidos** o **por persona**, búsqueda de texto (sin distinguir tildes ni mayúsculas), filtros, orden y paginación, borrado automático según el plazo de conservación, exportación y borrado desde «Mis apps» |
+
+Las apps **no escriben SQL**: usan `window.BaseDatos` (`guardar`, `obtener`, `listar` con `buscar`/`filtros`/`orden`, `borrar`, `vaciar`, `colecciones`). El servidor construye siempre las consultas con parámetros y encierra cada app en su propio espacio de datos, así que una app no puede leer datos de otra ni inyectar SQL. Mientras se construye, la vista previa usa una **base de datos de pruebas** separada que se vacía sola. Con datos personales, guardar en la base de datos es riesgo medio (revisión antes de publicar).
 
 ## Niveles de riesgo
 
@@ -77,7 +87,8 @@ En desarrollo no hay SSO: en la cabecera se puede cambiar de **perfil de prueba*
 | `GEMINI_FAST_MODEL` | Modelo para preguntas y para el asistente de las apps (por defecto, el mismo) |
 | `DPD_EMAIL` | Correo del Delegado de Protección de Datos (botón "Escribir al DPD") |
 | `PORT` | Puerto (por defecto 3000) |
-| `DATA_DIR` | Carpeta de las apps publicadas (por defecto `data/`) |
+| `DATA_DIR` | Carpeta de las apps publicadas y de la base de datos `datos.sqlite` (por defecto `data/`) |
+| `DB_MAX_RECORDS_PER_APP` | Máximo de registros por app (por defecto 50.000) |
 | `AUTH_MODE` | `proxy` (por defecto en producción) o `desarrollo` |
 | `AUTH_HEADER_USER`, `AUTH_HEADER_NAME`, `AUTH_HEADER_GROUPS`, `AUTH_HEADER_DEPARTMENT` | Cabeceras del SSO (por defecto `x-remote-user`, `x-remote-name`, `x-remote-groups`, `x-remote-department`) |
 | `TRUSTED_PROXIES` | Direcciones del proxy autorizado a enviar esas cabeceras (por defecto localhost) |
@@ -98,6 +109,7 @@ server/portal.ts    Publicación, revisión, catálogo y visor de apps publicada
 server/identity.ts  Identidad (SSO por proxy / perfiles de prueba)
 server/network.ts   Filtro de red interna y VPN
 server/store.ts     Almacén de publicaciones en disco
+server/db.ts        Base de datos SQL de las apps (API segura sobre SQLite)
 server/demo.ts      Respuestas del modo demostración
 src/App.tsx         Navegación: crear, catálogo, mis apps, revisión
 src/views/          Asistente y vistas del portal
@@ -114,6 +126,6 @@ Esta versión es una base funcional. Para desplegarla en el Ayuntamiento convien
 2. **Proveedor de IA**: firmar el contrato de encargo de tratamiento, garantizar tratamiento en la UE y que los datos no se usan para entrenar; o sustituir el cliente por un modelo alojado por el Ayuntamiento (el código está aislado en `server.ts`).
 3. Configurar el **proxy con SSO** y las redes (ver [docs/despliegue.md](docs/despliegue.md)) y crear los grupos de plantilla, contratas y revisores en el directorio.
 4. Avisar por correo a los revisores de las publicaciones pendientes y a los responsables de las revisiones anuales próximas (hoy se consultan en la plataforma).
-5. Si el volumen crece, sustituir el almacén en disco por una base de datos (la interfaz está aislada en `server/store.ts`).
+5. Si el volumen crece, migrar `server/db.ts` y `server/store.ts` a PostgreSQL o al gestor corporativo (las consultas están aisladas en esos ficheros) y cifrar el disco donde está `DATA_DIR`.
 6. Llevar el registro de auditoría al sistema de logs corporativo y sustituir el límite de peticiones en memoria por el del proxy.
 7. Recordar que el detector de datos es una ayuda, no una garantía: no detecta nombres propios sueltos, por eso el cuestionario sigue siendo obligatorio.

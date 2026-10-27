@@ -1,5 +1,5 @@
 import {
-  AI_USES, AUDIENCES, DATA_CATEGORIES, DECISIONS, INTEGRATIONS, LEVEL_INFO, ORIGINS, RETENTIONS, STORAGES, VOLUMES,
+  AI_USES, AUDIENCES, DATA_CATEGORIES, DB_SCOPES, DECISIONS, INTEGRATIONS, LEVEL_INFO, ORIGINS, RETENTIONS, STORAGES, VOLUMES,
   type Answers, type Assessment,
 } from "@/shared/policy";
 import type { ScanFinding } from "@/shared/codeScan";
@@ -37,11 +37,11 @@ ${list(a.data.map((d) => label(DATA_CATEGORIES, d)))}
 ${e.undeclared.length ? `\n**Detectados en los ejemplos sin declarar:** ${e.undeclared.map((d) => label(DATA_CATEGORIES, d)).join(", ")}\n` : ""}
 - **Origen:** ${a.origin.map((o) => label(ORIGINS, o)).join("; ") || "—"}
 - **Volumen:** ${label(VOLUMES, a.volume)}
-- **Conservación:** ${label(RETENTIONS, a.retention)}
+- **Conservación:** ${label(RETENTIONS, a.retention)}${a.retention === "limitada" ? ` (${a.retentionDays} días)` : ""}
 
 ## 4. Uso
 - **Usuarios:** ${label(AUDIENCES, a.audience)}
-- **Almacenamiento:** ${label(STORAGES, a.storage)}
+- **Almacenamiento:** ${label(STORAGES, a.storage)}${a.storage === "base_datos" ? ` — registros: ${label(DB_SCOPES, a.dbScope).toLowerCase()}` : ""}
 - **Uso de IA:** ${label(AI_USES, a.aiUse)}
 - **Decisiones:** ${label(DECISIONS, a.decisions)}
 - **Integraciones:** ${label(INTEGRATIONS, a.integrations)}

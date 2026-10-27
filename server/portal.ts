@@ -11,6 +11,12 @@ import {
 } from "../shared/publishing";
 import { requireIdentity, requireReviewer, requireStaff } from "./identity";
 import { store } from "./store";
+import * as db from "./db";
+
+/** Ámbito de datos: reales si está publicada; de pruebas si no (revisión). */
+function dataScope(p: Publication, who: Identity): string {
+  return p.status === "publicada" ? `app:${p.id}` : `revision:${p.id}:${who.user}`;
+}
 
 interface Deps {
   audit: (event: string, answers: Answers, a: Assessment, extra?: Record<string, unknown>) => void;
@@ -36,7 +42,15 @@ function summary(p: Publication, who: Identity) {
     actualizada: p.updatedAt,
     accesoExterno: p.externalAccess,
     url: `/apps/${p.id}`,
-    ...(manage ? { miembros: p.members, historial: p.history, propia: p.owner === who.user } : {}),
+    almacenamiento: p.assessment.constraints.storage,
+    ...(manage
+      ? {
+          miembros: p.members,
+          historial: p.history,
+          propia: p.owner === who.user,
+          registros: p.assessment.constraints.storage === "bd" ? db.stats(`app:${p.id}`).registros : undefined,
+        }
+      : {}),
   };
 }
 
@@ -98,14 +112,13 @@ const VIEWER_JS = `(function(){
         localStorage.setItem(key, json);
       } catch (err) {}
     }
-    if (d.tipo === 'ia-pregunta' && typeof d.id === 'string') {
-      var reply = function(m){ m.tipo = 'ia-respuesta'; m.id = d.id; e.source.postMessage(m, '*'); };
-      if (!b.dataset.ia) return reply({ error: 'Esta aplicación no está autorizada a usar IA.' });
-      fetch('/api/apps/' + encodeURIComponent(id) + '/ia', {
+    if (d.tipo === 'plataforma' && typeof d.id === 'string') {
+      var reply = function(m){ m.tipo = 'plataforma-respuesta'; m.id = d.id; e.source.postMessage(m, '*'); };
+      fetch('/api/apps/' + encodeURIComponent(id) + '/plataforma', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ texto: String(d.texto || '') })
-      }).then(function(r){ return r.json().then(function(j){ if (!r.ok) throw new Error(j.error); reply({ texto: j.texto }); }); })
-        .catch(function(err){ reply({ error: err.message || 'Error del asistente' }); });
+        body: JSON.stringify({ servicio: d.servicio, op: d.op, args: d.args })
+      }).then(function(r){ return r.json().then(function(j){ if (!r.ok) throw new Error(j.error); reply({ resultado: j.resultado }); }); })
+        .catch(function(err){ reply({ error: err.message || 'Error de la plataforma' }); });
     }
   });
 })();`;
@@ -292,20 +305,58 @@ export function registerPortal(app: Express, deps: Deps) {
     res.type("text/html; charset=utf-8").send(hardenHtml(html, p.assessment.constraints, { published: true }));
   });
 
-  /** IA de las apps publicadas: usa la evaluación guardada, no la del navegador. */
-  app.post("/api/apps/:id/ia", requireIdentity, deps.rateLimit(30, 5 * 60_000), async (req, res) => {
+  /** Servicios (IA y base de datos) de las apps publicadas: usan la evaluación guardada, no la del navegador. */
+  app.post("/api/apps/:id/plataforma", requireIdentity, deps.rateLimit(600, 5 * 60_000), async (req, res) => {
     const p = store.get(req.params.id);
     const who = req.identity!;
     if (!p || !canPreview(p, who)) return res.status(404).json({ error: "No encontrada." });
-    if (!p.assessment.constraints.ai) return res.status(403).json({ error: "Esta aplicación no está autorizada a usar IA." });
-    const q = maskPii(String(req.body?.texto || "").slice(0, 8000));
-    if (!q.text.trim()) return res.status(400).json({ error: "Pregunta vacía." });
+    if (!(who.user === p.owner || who.isReviewer) && isExpired(p)) return res.status(410).json({ error: "Revisión anual vencida." });
+    const { servicio, op } = req.body || {};
+    const args = Array.isArray(req.body?.args) ? req.body.args : [];
     try {
-      deps.audit("ia_app_publicada", p.answers, p.assessment, { id: p.id, enmascarados: q.replaced });
-      res.json({ texto: await deps.askAi(p.answers, q.text) });
+      if (servicio === "ia") {
+        if (!p.assessment.constraints.ai) return res.status(403).json({ error: "Esta aplicación no está autorizada a usar IA." });
+        const q = maskPii(String(args[0] || "").slice(0, 8000));
+        if (!q.text.trim()) return res.status(400).json({ error: "Pregunta vacía." });
+        deps.audit("ia_app_publicada", p.answers, p.assessment, { id: p.id, enmascarados: q.replaced });
+        return res.json({ resultado: await deps.askAi(p.answers, q.text) });
+      }
+      if (servicio === "bd") {
+        if (p.assessment.constraints.storage !== "bd") return res.status(403).json({ error: "Esta aplicación no usa la base de datos." });
+        const ctx = { scope: dataScope(p, who), user: who.user, dbScope: p.assessment.constraints.dbScope };
+        const resultado = db.execute(ctx, op, args);
+        if (op === "guardar" || op === "borrar" || op === "vaciar") {
+          deps.audit("bd_escritura", p.answers, p.assessment, { id: p.id, op, usuario: who.user });
+        }
+        return res.json({ resultado });
+      }
+      res.status(400).json({ error: "Servicio desconocido." });
     } catch (error) {
-      console.error("Error en IA de app publicada:", error);
-      res.status(500).json({ error: "El asistente de IA no está disponible." });
+      if (error instanceof db.DbError) return res.status(400).json({ error: error.message });
+      console.error("Error en servicios de app publicada:", error);
+      res.status(500).json({ error: "El servicio no está disponible." });
     }
+  });
+
+  // --- Datos de una app (responsable y revisores): exportar y borrar --------
+  app.get("/api/publicaciones/:id/datos", requireStaff, (req, res) => {
+    const who = req.identity!;
+    const p = store.get(req.params.id);
+    if (!p || !canManage(p, who)) return res.status(404).json({ error: "No encontrada." });
+    deps.audit("bd_exportacion", p.answers, p.assessment, { id: p.id, usuario: who.user });
+    res.setHeader("Content-Disposition", `attachment; filename="datos-${p.id}.json"`);
+    res.json({ aplicacion: p.name, exportado: now(), registros: db.exportScope(`app:${p.id}`) });
+  });
+
+  app.post("/api/publicaciones/:id/datos/borrar", requireStaff, (req, res) => {
+    const who = req.identity!;
+    const p = store.get(req.params.id);
+    if (!p || !canManage(p, who)) return res.status(404).json({ error: "No encontrada." });
+    const borrados = db.deleteScope(`app:${p.id}`);
+    p.history.push({ date: now(), user: who.user, action: "Datos borrados", comment: `${borrados} registro(s)` });
+    p.updatedAt = now();
+    store.save(p);
+    deps.audit("bd_borrado_total", p.answers, p.assessment, { id: p.id, borrados });
+    res.json({ borrados });
   });
 }

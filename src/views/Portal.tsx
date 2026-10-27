@@ -105,8 +105,9 @@ export function MyApps({ onEdit }: { onEdit: (id: string) => void }) {
   const { items, error, reload } = useList("/api/publicaciones/mias");
   const [busy, setBusy] = useState("");
 
-  async function act(id: string, action: "retirar" | "renovar") {
-    if (action === "retirar" && !confirm("¿Retirar la aplicación? Dejará de estar disponible.")) return;
+  async function act(id: string, action: "retirar" | "renovar" | "datos/borrar") {
+    if (action === "retirar" && !confirm("¿Retirar la aplicación? Dejará de estar disponible. Sus datos se conservan hasta que los borres.")) return;
+    if (action === "datos/borrar" && !confirm("¿Borrar TODOS los registros guardados por esta aplicación? No se puede deshacer.")) return;
     setBusy(id);
     try {
       await api(`/api/publicaciones/${id}/${action}`, {});
@@ -140,6 +141,19 @@ export function MyApps({ onEdit }: { onEdit: (id: string) => void }) {
               <p className="text-xs text-muted-foreground">Acceso desde internet solicitado: se estudiará en la fase de publicación externa.</p>
             )}
             <p className="text-xs text-muted-foreground">Revisión anual: antes del {fmtDate(p.revisarAntesDe)}</p>
+            {p.almacenamiento === "bd" && (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs">
+                <span className="flex-1">
+                  Base de datos municipal: <strong>{p.registros ?? 0}</strong> registro(s)
+                </span>
+                <a className={buttonVariants({ variant: "outline", size: "xs" })} href={`/api/publicaciones/${p.id}/datos`} download>
+                  Exportar datos
+                </a>
+                <Button size="xs" variant="destructive" disabled={busy === p.id || !p.registros} onClick={() => act(p.id, "datos/borrar")}>
+                  Borrar datos
+                </Button>
+              </div>
+            )}
             <div className="mt-auto flex flex-wrap gap-2">
               <a className={buttonVariants({ variant: "outline", size: "sm" })} href={p.url} target="_blank" rel="noreferrer">
                 Abrir <ExternalLink />

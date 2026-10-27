@@ -109,7 +109,7 @@ test("la app de demostración supera la revisión en cualquier configuración pe
   const { scanCode } = await import("../shared/codeScan");
   for (const data of [["ninguno"], ["internos"], ["contacto"], ["especiales"]] as const)
     for (const audience of ["personal", "equipo", "departamento", "externos"] as const)
-      for (const storage of ["ninguno", "navegador"] as const)
+      for (const storage of ["ninguno", "navegador", "base_datos"] as const)
         for (const aiUse of ["no", "sin_datos"] as const) {
           const a = answers({ data: [...data], audience, storage, aiUse, origin: ["propios"] });
           const e = assess(a);

@@ -88,26 +88,27 @@ export function BuildStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Puente con el asistente de IA municipal para la app en vista previa.
+  // Puente con los servicios de la plataforma (IA y base de datos de pruebas).
   useEffect(() => {
     async function onMessage(e: MessageEvent) {
       if (e.source !== iframeRef.current?.contentWindow) return;
       const d = e.data || {};
-      if (d.tipo !== "ia-pregunta" || typeof d.id !== "string") return;
-      const reply = (msg: object) => (e.source as Window).postMessage({ tipo: "ia-respuesta", id: d.id, ...msg }, "*");
-      if (!assessment.constraints.ai) return reply({ error: "Esta aplicación no está autorizada a usar IA." });
+      if (d.tipo !== "plataforma" || typeof d.id !== "string") return;
+      const reply = (msg: object) => (e.source as Window).postMessage({ tipo: "plataforma-respuesta", id: d.id, ...msg }, "*");
       try {
-        // Doble protección: se enmascara aquí y otra vez en el servidor.
-        const r = await fetch("/api/ia-app", {
+        const args: unknown[] = Array.isArray(d.args) ? d.args : [];
+        // Doble protección para la IA: se enmascara aquí y otra vez en el servidor.
+        if (d.servicio === "ia") args[0] = maskPii(String(args[0] || "")).text;
+        const r = await fetch("/api/plataforma-prueba", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ respuestas: answers, texto: maskPii(String(d.texto || "")).text }),
+          body: JSON.stringify({ respuestas: answers, servicio: d.servicio, op: d.op, args }),
         });
         const data = await r.json();
         if (!r.ok) throw new Error(data.error);
-        reply({ texto: data.texto });
+        reply({ resultado: data.resultado });
       } catch (err: any) {
-        reply({ error: err.message || "Error del asistente" });
+        reply({ error: err.message || "Error de la plataforma" });
       }
     }
     window.addEventListener("message", onMessage);
@@ -256,7 +257,10 @@ export function BuildStep({
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          La vista previa funciona aislada: no puede acceder a internet, a la plataforma ni a tus otros datos. Lo que guardes aquí se pierde al recargar.
+          La vista previa funciona aislada: no puede acceder a internet, a la plataforma ni a tus otros datos.{" "}
+          {assessment.constraints.storage === "bd"
+            ? "Usa una base de datos de pruebas, separada de los datos reales, que se vacía sola al día siguiente."
+            : "Lo que guardes aquí se pierde al recargar."}
         </p>
       </div>
     </div>
