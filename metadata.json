@@ -1,6 +1,6 @@
 {
-  "name": "Remix: NoteCast AI",
-  "description": "Transform your notes and documents into engaging AI-generated podcast conversations between two hosts.",
+  "name": "Taller de Apps IA municipal",
+  "description": "Plataforma para que el personal municipal no técnico cree pequeñas aplicaciones con lenguaje natural, con evaluación de privacidad y seguridad integrada.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
