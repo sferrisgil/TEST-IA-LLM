@@ -1,20 +1,203 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Taller de Apps IA municipal
 
-# Run and deploy your AI Studio app
+Plataforma para que el **personal no técnico del Ayuntamiento** cree pequeñas aplicaciones (personales o para su equipo) describiéndolas en lenguaje natural ("vibe coding"), **sin comprometer la privacidad ni la seguridad** y sin saltarse las políticas municipales. Las apps se **publican en un servidor web interno**, accesible para la plantilla y, cuando la app lo permite, para las contratas a través de la VPN.
 
-This contains everything you need to run your app locally.
+La idea central: **la IA construye, pero las reglas las pone el Ayuntamiento.** El nivel de riesgo lo calcula un motor de reglas determinista y auditable (no la IA), y esas reglas se convierten en restricciones técnicas que el navegador hace cumplir.
 
-View your app in AI Studio: https://ai.studio/apps/f4f6e506-2b60-4b1f-ad76-4791d7779d1a
+## Cómo funciona (para la persona usuaria)
 
-## Run Locally
+| Paso | Qué ocurre |
+|---|---|
+| 1. Tu idea | Describe la app con tus palabras. La IA propone nombre, finalidad y preguntas para concretar la funcionalidad. Se identifica a la persona responsable. |
+| 2. Los datos | Marca qué tipo de información usará (con ejemplos en lenguaje llano). Puedes **pegar un ejemplo de los datos**: se analiza **solo en el navegador** (DNI/NIE con letra de control, IBAN, tarjetas, NSS, teléfonos, correos, direcciones, matrículas, credenciales y palabras que indican salud, menores, servicios sociales, datos penales…). Lo detectado cuenta en la evaluación aunque no se marque. |
+| 3. El uso | Quién la usará (solo yo, equipo, departamento, plantilla, contratas por VPN, ciudadanía), **dónde se guardan los datos** (nada, el navegador o la **base de datos municipal SQL**), si usa IA, si interviene en decisiones sobre personas, integraciones y conservación. |
+| 4. La IA | Solo si la app (o automatización) usa IA: tareas, ámbitos de alto riesgo, prácticas prohibidas, transparencia, supervisión humana y complejidad. Devuelve la **clasificación según el Reglamento de IA** y el **modelo asignado**. |
+| 5. Evaluación | Semáforo de riesgo con los motivos, las medidas que aplica la herramienta, las obligaciones del responsable y los compromisos de uso que hay que aceptar. |
+| 6. Construir | Conversación con la IA para crear y ajustar la app, con vista previa aislada, revisión de seguridad automática, deshacer y descarga. |
+| 7. Ficha y publicación | Publicación en la intranet (directa si el riesgo es bajo; si no, tras revisión de TI/DPD) y ficha de la aplicación (Markdown/JSON) para el inventario y el Registro de Actividades de Tratamiento. |
 
-**Prerequisites:**  Node.js
+Además de **Crear app**, la plataforma tiene:
 
+- **Catálogo**: apps a las que tiene acceso cada persona. Las contratas (por VPN) solo ven esta sección y solo las apps abiertas a contratas.
+- **Mis apps**: estado de las publicaciones, nueva versión, renovación anual y retirada.
+- **Revisión** (TI y DPD): aprobar o rechazar publicaciones, probar las apps e inventario completo.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Detalles de arquitectura, control de acceso, ciclo de publicación, configuración del proxy/SSO y propuesta de **fase 2 (acceso público)**: [docs/despliegue.md](docs/despliegue.md).
+
+## Uso de IA: Reglamento de IA, complejidad y modelo
+
+Cuando la app o automatización usa IA mientras funciona, se evalúa ([`shared/aiAct.ts`](shared/aiAct.ts)):
+
+1. **Cumplimiento del Reglamento (UE) 2024/1689**:
+   - *Práctica prohibida* (art. 5: manipulación, reconocimiento de emociones en el trabajo o la educación, categorización biométrica, predicción de delitos por perfil, puntuación social) → **no permitido**.
+   - *Alto riesgo* (ámbitos del Anexo III —ayudas y servicios esenciales, personal, educación, policía local, extranjería, sancionadores, emergencias, infraestructuras, biometría— cuando influye en decisiones) → **riesgo alto**: solo prototipo; exige evaluación de impacto en derechos fundamentales (art. 27), supervisión humana, registros, inscripción en la base de datos de la UE (art. 49), etc.
+   - *Posible alto riesgo* (ámbito del Anexo III sin influir en decisiones) → **riesgo medio** y documentar la excepción del art. 6.3.
+   - *Transparencia* (chat con personas o textos publicados) → la app debe avisar de que es IA (art. 50).
+   - Siempre: alfabetización en IA (art. 4).
+2. **Complejidad de la tarea** (básica, intermedia, avanzada) según las tareas, el razonamiento necesario y el impacto de un error, junto con el tamaño de los textos y los idiomas.
+3. **Elección del modelo**: de entre los modelos del catálogo municipal, el **más económico que cumple** la capacidad, el contexto, los idiomas y, si se envían datos personales, que esté autorizado para ello (contrato de encargo, proceso en la UE o servidor local). Si ninguno sirve, la app no se puede construir y se explica el motivo modelo a modelo.
+
+La app generada queda ligada a ese modelo: el servidor solo llama al modelo asignado, limita el tamaño de cada consulta, y la app debe mostrar el aviso de IA y presentar los resultados como **borrador para revisión humana** cuando corresponde. También se avisa de límites prácticos (cálculos, documentos propios, automatizaciones sin supervisión, volumen).
+
+El catálogo lo mantiene TI en un fichero JSON (`MODELS_FILE`, ejemplo en [`config/modelos.ejemplo.json`](config/modelos.ejemplo.json)). Admite modelos de Gemini y cualquier servidor compatible con la API de OpenAI (vLLM, Ollama…), por ejemplo un **modelo local** para tratar datos personales sin que salgan del Ayuntamiento.
+
+## Automatizaciones programadas
+
+Además de aplicaciones, se pueden crear **automatizaciones de flujos de trabajo** que se ejecutan solas ([`shared/workflow.ts`](shared/workflow.ts), [`server/automations.ts`](server/automations.ts)):
+
+- La IA genera, junto con la app (que sirve de panel), un **flujo declarativo** con pasos de un catálogo cerrado: *listar*, *para cada*, *si*, *IA*, *crear*, *actualizar*, *borrar* y *notificar*. En el servidor **no se ejecuta código generado**: el flujo lo interpreta el motor con límites estrictos (5.000 operaciones, 200 consultas a la IA, 500 elementos por bucle y 5 minutos por ejecución).
+- **Programación:** cada N minutos (mínimo 15), diaria, semanal, mensual o manual. Se edita en la propia pantalla.
+- **Probar ahora:** ejecuta el flujo en la base de datos de pruebas y muestra el registro de lo que ha hecho.
+- Una vez publicada, se ejecuta sola a su hora. Desde «Mis apps» se puede ver el historial, **ejecutar ahora** y **pausar o reanudar**. Los avisos del flujo y los errores llegan por correo a la persona responsable.
+- Si la evaluación exige revisión humana, lo que el flujo escribe con ayuda de la IA queda marcado como `_revision: "pendiente"`.
+- Necesitan la base de datos municipal y siguen las mismas reglas de evaluación, publicación y derivación que las apps.
+
+## Escalabilidad
+
+Hardware recomendado para 1, 10, 50 y 7.000 personas, basado en mediciones reales de rendimiento: [docs/dimensionamiento.md](docs/dimensionamiento.md). Resumen: con 4 núcleos la plataforma atiende miles de peticiones por segundo, mientras que el pico previsto para 7.000 personas es de ~50 pet/s. A gran escala lo que más pesa es la alta disponibilidad, las copias y la capacidad de IA.
+
+## Derivación a TI y al DPD
+
+Algunas propuestas superan lo que se puede resolver en autoservicio ([`shared/derivation.ts`](shared/derivation.ts)). En ese caso la plataforma **deriva** la propuesta:
+
+| Motivo | Se envía a |
+|---|---|
+| Reglamento de IA: riesgo limitado (transparencia) | DPD |
+| Reglamento de IA: posible alto riesgo (art. 6.3), alto riesgo o práctica prohibida | DPD y TI |
+| La tarea necesita un modelo avanzado (complejidad avanzada o coste alto) o ningún modelo sirve | TI |
+| Volumen de consultas a la IA muy alto | TI |
+| Escala que puede desbordar la plataforma o SQLite: más de 100 usuarios simultáneos, más de 20.000 operaciones al día, más de 50.000 registros (cupo estándar) o de 500.000, o uso intensivo concurrente | TI |
+| Riesgo global alto o no permitido | DPD y TI |
+
+Qué ocurre:
+
+1. En la evaluación aparece un aviso con los motivos y el botón **«Enviar la propuesta a TI/DPD»**. La persona puede añadir un mensaje y un teléfono.
+2. TI y/o el DPD **reciben automáticamente la ficha completa** (Markdown y JSON adjuntos) por **correo** (SMTP) y, si se configura, en la **herramienta de tickets** (webhook). También aparece en la bandeja **Revisión → Propuestas derivadas**.
+3. La persona puede preparar un **prototipo** con datos ficticios y enviarlo como actualización; **no puede publicarlo por su cuenta** (el servidor lo rechaza).
+4. TI/DPD conversan con la persona en la propia solicitud y la resuelven: **en estudio, aprobada, aprobada y publicada** (si hay prototipo), **rechazada** o **pasa a proyecto de TI**. Cada cambio se notifica a la persona solicitante.
+
+## Dónde guardan los datos las apps
+
+| Opción | Cuándo usarla | Cómo funciona |
+|---|---|---|
+| **No guarda nada** | Calculadoras, consultas puntuales | Todo se borra al cerrar |
+| **En el navegador** (como las cookies) | Herramientas personales sencillas | Los datos quedan solo en ese ordenador y navegador, separados por app y usuario. No se comparten ni tienen copia de seguridad |
+| **Base de datos municipal (SQL)** | Datos que se comparten, se consultan desde varios equipos o necesitan búsquedas | SQLite en el servidor interno. Registros **compartidos** o **por persona**, búsqueda de texto (sin distinguir tildes ni mayúsculas), filtros, orden y paginación, borrado automático según el plazo de conservación, exportación y borrado desde «Mis apps» |
+
+Las apps **no escriben SQL**: usan `window.BaseDatos` (`guardar`, `obtener`, `listar` con `buscar`/`filtros`/`orden`, `borrar`, `vaciar`, `colecciones`). El servidor construye siempre las consultas con parámetros y encierra cada app en su propio espacio de datos, así que una app no puede leer datos de otra ni inyectar SQL. Mientras se construye, la vista previa usa una **base de datos de pruebas** separada que se vacía sola. Con datos personales, guardar en la base de datos es riesgo medio (revisión antes de publicar).
+
+## Niveles de riesgo
+
+| Nivel | Ejemplos | Qué permite |
+|---|---|---|
+| **Bajo** | Calculadora de plazos, guía con información pública, uso personal sin datos personales | Construir y usar |
+| **Medio** | Datos de contacto o identificativos para el equipo; app para la ciudadanía sin datos personales; IA con datos enmascarados | Construir; comunicar al DPD y a TI antes de compartir |
+| **Alto** | Salud, menores, colectivos vulnerables, datos penales, decisiones automáticas, gran escala, escritura en otros sistemas, datos personales hacia fuera | **Solo prototipo con datos ficticios** (franja visible, sin almacenamiento). Datos reales requieren EIPD y aprobación de TI/DPD |
+| **No permitido** | Contraseñas en la app, perfilado o "puntuación" de personas, datos personales en nubes externas, datos especialmente protegidos expuestos fuera o enviados a la IA | No se construye (bloqueado también en el servidor). Se genera la ficha para tramitarlo con TI/DPD |
+
+Las reglas están en [`shared/policy.ts`](shared/policy.ts) y se basan en el RGPD (arts. 5, 9, 10, 22, 30, 35), la LOPDGDD, el Esquema Nacional de Seguridad y el Reglamento europeo de IA. **Deben revisarlas y ajustarlas TI y el Delegado de Protección de Datos** del Ayuntamiento.
+
+## Medidas de seguridad
+
+**Protección de los datos frente a la IA**
+- Los ejemplos de datos se analizan en el navegador y nunca se envían.
+- Todo texto que va al proveedor de IA (descripción, peticiones, preguntas de las apps) se **enmascara** antes (`[DNI]`, `[EMAIL]`, `[IBAN]`…), en el navegador y otra vez en el servidor.
+- Los datos especialmente protegidos no pueden enviarse a la IA (regla de bloqueo).
+- El registro de auditoría guarda metadatos (app, departamento, nivel, nº de datos enmascarados), nunca contenido.
+
+**Contención de las apps generadas**
+- Instrucciones obligatorias al modelo derivadas de la evaluación (sin red, sin librerías externas, tipo de almacenamiento permitido, aviso de privacidad, botón de borrado, modo prototipo, accesibilidad…). El modelo no puede relajarlas aunque el usuario lo pida.
+- **Revisión automática del código** ([`shared/codeScan.ts`](shared/codeScan.ts)): bloquea red (`fetch`, XHR, WebSocket…), scripts externos, `eval`, cookies, acceso a la plataforma, cámara/ubicación, almacenamiento no autorizado y datos reales incrustados. Si hay problemas graves, se pide una corrección automática; si persisten, la versión no se entrega.
+- **CSP inyectada en cada app** (`connect-src 'none'`, etc.): aunque algo escapara al escáner, el navegador impide que la app envíe datos fuera. Se aplica también al fichero descargado.
+- **Vista previa aislada**: se sirve desde el servidor con su propia CSP y `sandbox` (origen opaco), así que no puede leer la sesión ni los datos de la plataforma.
+- Las apps que necesitan IA solo pueden usar `window.IAMunicipal.preguntar()`, un puente que pasa por la plataforma (que comprueba la autorización y enmascara).
+
+**Plataforma y publicación**
+- El servidor **recalcula siempre la evaluación** y **vuelve a revisar el código** al publicar; no confía en el navegador.
+- Identidad por **SSO corporativo** (cabeceras del proxy, aceptadas solo desde el proxy) y acceso limitado a la **red interna y la VPN**.
+- Control de acceso por app (personal, equipo, departamento, plantilla, contratas), revisión por TI/DPD para riesgo medio/alto, nadie aprueba sus propias apps, y revisión anual obligatoria.
+- Las apps publicadas se ejecutan **aisladas** en un visor: no pueden llamar a la API ni leer la sesión; sus datos quedan en el navegador de cada persona, separados por app.
+- Cabeceras de seguridad (CSP estricta en producción, `X-Frame-Options`, `nosniff`, `Referrer-Policy`), límite de tamaño de peticiones y de frecuencia.
+
+## Puesta en marcha
+
+Requisitos: Node.js 20+.
+
+```bash
+npm install
+cp .env.example .env.local   # y rellena GEMINI_API_KEY
+npm run dev                  # http://localhost:3000
+```
+
+Sin `GEMINI_API_KEY` la plataforma arranca en **modo demostración**: todo el flujo funciona (cuestionario, evaluación, revisión, vista previa, publicación) con una app de ejemplo en lugar de la generada por la IA.
+
+En desarrollo no hay SSO: en la cabecera se puede cambiar de **perfil de prueba** (empleada, compañero del mismo departamento, otro departamento, revisor TI/DPD, contrata) para ensayar permisos y el ciclo de revisión. En producción (`NODE_ENV=production`) los perfiles de prueba se desactivan y la identidad viene del proxy.
+
+| Variable | Uso |
+|---|---|
+| `GEMINI_API_KEY` | Clave del proveedor de IA |
+| `GEMINI_MODEL` | Modelo para construir apps (por defecto `gemini-3.1-pro-preview`) |
+| `GEMINI_FAST_MODEL` | Modelo para preguntas y para el asistente de las apps (por defecto, el mismo) |
+| `DPD_EMAIL` | Correo del Delegado de Protección de Datos (botón "Escribir al DPD") |
+| `PORT` | Puerto (por defecto 3000) |
+| `DATA_DIR` | Carpeta de las apps publicadas y de la base de datos `datos.sqlite` (por defecto `data/`) |
+| `TI_EMAIL`, `DPD_EMAIL` | Buzones que reciben las propuestas derivadas |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Servidor de correo para los avisos (sin él, en desarrollo los correos se simulan en el registro) |
+| `DERIVATION_WEBHOOK_URL`, `DERIVATION_WEBHOOK_TOKEN` | Webhook opcional para crear la incidencia en la herramienta de tickets de TI |
+| `AUTH_HEADER_EMAIL` | Cabecera del SSO con el correo de la persona (para avisarla de las respuestas; por defecto `x-remote-email`) |
+| `MODELS_FILE` | Catálogo de modelos de IA (ver `config/modelos.ejemplo.json`). Sin él se usa un catálogo de ejemplo |
+| `LOCAL_MODEL_URL`, `LOCAL_MODEL` | Con el catálogo de ejemplo: URL y nombre de un modelo local compatible con OpenAI (activa el «modelo local») |
+| `WORKERS` | Procesos del servidor (uno por núcleo; por defecto 1). Solo en producción |
+| `SCHEDULER_ENABLED`, `SCHEDULER_CONCURRENCY` | Activar el programador de automatizaciones en esta instancia (por defecto sí) y cuántas ejecuta a la vez (por defecto 2) |
+| `RATE_LIMIT_FACTOR` | Multiplica todos los límites de peticiones por usuario (por defecto 1) |
+| `DB_MAX_RECORDS_PER_APP` | Máximo de registros por app (por defecto 50.000) |
+| `AUTH_MODE` | `proxy` (por defecto en producción) o `desarrollo` |
+| `AUTH_HEADER_USER`, `AUTH_HEADER_NAME`, `AUTH_HEADER_GROUPS`, `AUTH_HEADER_DEPARTMENT` | Cabeceras del SSO (por defecto `x-remote-user`, `x-remote-name`, `x-remote-groups`, `x-remote-department`) |
+| `TRUSTED_PROXIES` | Direcciones del proxy autorizado a enviar esas cabeceras (por defecto localhost) |
+| `INTERNAL_NETWORKS` | Redes desde las que se atiende (red municipal + VPN). En producción, por defecto, redes privadas |
+| `GROUP_STAFF`, `GROUP_CONTRACTOR`, `GROUP_REVIEWER` | Grupos de plantilla, contratas y revisores (por defecto `plantilla`, `contratas`, `revisores-apps`) |
+
+Otros comandos: `npm test` (pruebas de reglas, detector y escáner), `npm run lint` (tipos), `npm run build` y `npm start` (producción).
+
+## Estructura
+
+```
+shared/policy.ts    Cuestionario, reglas de riesgo, restricciones y compromisos
+shared/pii.ts       Detector y enmascarado de datos personales (sin red)
+shared/codeScan.ts  Revisión del código generado, CSP, puentes de IA y de datos
+shared/publishing.ts Reglas de publicación y control de acceso
+shared/aiAct.ts     Reglamento de IA, complejidad y selección de modelo
+shared/derivation.ts Cuándo y a quién se deriva una propuesta (TI / DPD)
+shared/ficha.ts     Ficha de la propuesta (navegador y servidor)
+server/derivations.ts Solicitudes derivadas: envío, conversación y resolución
+shared/workflow.ts  Definición de flujos programados, validación y calendario
+server/workflowRunner.ts Intérprete de flujos (sin código arbitrario)
+server/automations.ts Programador, pruebas e historial de ejecuciones
+scripts/carga/      Pruebas de carga reproducibles
+server/notify.ts    Avisos por correo y webhook
+server/models.ts    Catálogo de modelos y conexión (Gemini / compatible OpenAI)
+server.ts           API: evaluar, aclarar, construir, vista previa, IA para apps
+server/portal.ts    Publicación, revisión, catálogo y visor de apps publicadas
+server/identity.ts  Identidad (SSO por proxy / perfiles de prueba)
+server/network.ts   Filtro de red interna y VPN
+server/store.ts     Almacén de publicaciones en disco
+server/db.ts        Base de datos SQL de las apps (API segura sobre SQLite)
+server/demo.ts      Respuestas del modo demostración
+src/App.tsx         Navegación: crear, catálogo, mis apps, revisión
+src/views/          Asistente y vistas del portal
+src/steps/          Pantallas de cada paso del asistente
+lib/ficha.ts        Generación de la ficha de la aplicación
+tests/              Pruebas automáticas
+```
+
+## Antes de usarlo en producción
+
+Esta versión es una base funcional. Para desplegarla en el Ayuntamiento conviene:
+
+1. **Validar las reglas** de `shared/policy.ts` con TI y el DPD, y adaptar textos a las políticas internas.
+2. **Catálogo de modelos**: definir en `MODELS_FILE` los modelos realmente disponibles, con su región de proceso y si hay contrato de encargo (`personalData`). Para datos personales, valorar un modelo local. Los criterios de complejidad y los ámbitos del Reglamento de IA deben validarlos TI y el DPD.
+3. Configurar el **proxy con SSO** y las redes (ver [docs/despliegue.md](docs/despliegue.md)) y crear los grupos de plantilla, contratas y revisores en el directorio.
+4. Avisar por correo a los revisores de las publicaciones pendientes y a los responsables de las revisiones anuales próximas (hoy se consultan en la plataforma).
+5. Si el volumen crece, migrar `server/db.ts` y `server/store.ts` a PostgreSQL o al gestor corporativo (las consultas están aisladas en esos ficheros) y cifrar el disco donde está `DATA_DIR`.
+6. Llevar el registro de auditoría al sistema de logs corporativo y sustituir el límite de peticiones en memoria por el del proxy.
+7. Recordar que el detector de datos es una ayuda, no una garantía: no detecta nombres propios sueltos, por eso el cuestionario sigue siendo obligatorio.

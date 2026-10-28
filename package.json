@@ -8,7 +8,10 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "carga:preparar": "node scripts/carga/preparar.mjs",
+    "carga:medir": "node scripts/carga/medir.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -16,12 +19,14 @@
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "nodemailer": "^10.2.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "shadcn": "^4.7.0",
@@ -30,8 +35,13 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autocannon": "^8.0.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",

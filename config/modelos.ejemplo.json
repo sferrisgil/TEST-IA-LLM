@@ -1,0 +1,40 @@
+[
+  {
+    "id": "local-basico",
+    "name": "Modelo local (servidor municipal)",
+    "hosting": "local",
+    "capability": 1,
+    "contextTokens": 32000,
+    "languages": ["es", "cooficiales"],
+    "personalData": true,
+    "cost": 1,
+    "available": true,
+    "notes": "Modelo abierto servido con vLLM u Ollama en la red interna. Los datos no salen del Ayuntamiento.",
+    "connection": { "provider": "openai", "providerModel": "nombre-del-modelo-local", "baseUrl": "http://ia.intranet.ayto.local:8000/v1" }
+  },
+  {
+    "id": "rapido",
+    "name": "Modelo rápido en la nube",
+    "hosting": "ue",
+    "capability": 2,
+    "contextTokens": 128000,
+    "languages": ["es", "cooficiales", "otros"],
+    "personalData": false,
+    "cost": 1,
+    "available": true,
+    "notes": "Poner personalData a true solo si hay contrato de encargo de tratamiento y proceso en la UE.",
+    "connection": { "provider": "gemini", "providerModel": "nombre-del-modelo-rapido" }
+  },
+  {
+    "id": "avanzado",
+    "name": "Modelo avanzado en la nube",
+    "hosting": "ue",
+    "capability": 3,
+    "contextTokens": 1000000,
+    "languages": ["es", "cooficiales", "otros"],
+    "personalData": false,
+    "cost": 3,
+    "available": true,
+    "connection": { "provider": "gemini", "providerModel": "nombre-del-modelo-avanzado" }
+  }
+]
